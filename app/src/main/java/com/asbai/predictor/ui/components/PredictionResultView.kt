@@ -10,13 +10,17 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Article
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.EmojiEvents
+import androidx.compose.material.icons.filled.PictureAsPdf
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
@@ -35,12 +39,25 @@ import com.asbai.predictor.model.PredictionReport
 import com.asbai.predictor.model.TopPick
 
 @Composable
-fun PredictionResultView(report: PredictionReport) {
+fun PredictionResultView(
+    report: PredictionReport,
+    onExportPdf: () -> Unit
+) {
     Column(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        // خلاصه کورس و میزان اطمینان
+        FilledTonalButton(
+            onClick = onExportPdf,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Icon(Icons.Default.PictureAsPdf, contentDescription = null)
+            Spacer(Modifier.width(8.dp))
+            Text("تبدیل گزارش به PDF و ارسال", fontWeight = FontWeight.Bold)
+            Spacer(Modifier.width(6.dp))
+            Icon(Icons.Default.Share, contentDescription = null)
+        }
+
         ElevatedCard(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.elevatedCardColors(
@@ -87,7 +104,36 @@ fun PredictionResultView(report: PredictionReport) {
             }
         }
 
-        // سه‌تای برتر (رتبه ۱ تا ۳)
+        if (report.newsAndContextSummary.isNotBlank()) {
+            OutlinedCard(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.Article,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = "تحلیل اخبار و شرایط جانبی",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    Text(text = report.newsAndContextSummary, style = MaterialTheme.typography.bodySmall)
+                    if (report.searchSources.isNotEmpty()) {
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            text = "منابع بررسی‌شده:\n" + report.searchSources.joinToString("\n"),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
+
         if (report.topThree.isNotEmpty()) {
             ElevatedCard(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp)) {
@@ -115,7 +161,49 @@ fun PredictionResultView(report: PredictionReport) {
             }
         }
 
-        // سناریوی کورس و اسب شگفتی‌ساز
+        if (report.anomalyAlerts.isNotEmpty()) {
+            ElevatedCard(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.elevatedCardColors(
+                    containerColor = Color(0xFFFFF4E5)
+                )
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.Warning,
+                            contentDescription = null,
+                            tint = Color(0xFFB35C00)
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = "رادار ناهنجاری‌ها، تاکتیک تیمی و ریسک‌ها",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF5C2F00)
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    report.anomalyAlerts.forEachIndexed { idx, alert ->
+                        Text(
+                            text = "• [${alert.severity}] ${alert.title}",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF5C2F00)
+                        )
+                        Text(
+                            text = alert.description,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFF422800)
+                        )
+                        if (idx < report.anomalyAlerts.lastIndex) {
+                            Spacer(Modifier.height(6.dp))
+                        }
+                    }
+                }
+            }
+        }
+
         if (report.tacticalScenario.isNotBlank()) {
             OutlinedCard(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(14.dp)) {
@@ -167,7 +255,6 @@ fun PredictionResultView(report: PredictionReport) {
             }
         }
 
-        // تحلیل کامل همه اسب‌ها
         if (report.horseAnalyses.isNotEmpty()) {
             Text(
                 text = "آنالیز کامل تک‌تک اسب‌ها",
@@ -182,7 +269,6 @@ fun PredictionResultView(report: PredictionReport) {
                 }
         }
 
-        // سلب مسئولیت تحلیلی
         if (report.disclaimer.isNotBlank()) {
             Text(
                 text = report.disclaimer,
