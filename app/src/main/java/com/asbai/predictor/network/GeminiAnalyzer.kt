@@ -316,22 +316,18 @@ class GeminiAnalyzer {
     }
 
     private fun extractPureJson(raw: String): String {
+        val fence = "\u0060\u0060\u0060"
         var text = raw.trim()
-        if (text.startsWith("```")) {
-            text = text.removePrefix("```json").removePrefix("```").trim()
-            if (text.endsWith("```")) {
-                text = text.removeSuffix("```").trim()
+        if (text.startsWith(fence)) {
+            text = text.removePrefix("${fence}json").removePrefix(fence).trim()
+            if (text.endsWith(fence)) {
+                text = text.removeSuffix(fence).trim()
             }
         }
         val firstBrace = text.indexOf('{')
         val lastBrace = text.lastIndexOf('}')
         return if (firstBrace >= 0 && lastBrace > firstBrace) {
             text.substring(firstBrace, lastBrace + 1)
-        } else {
-            text
-        }
-    }
-}+ 1)
         } else {
             text
         }
