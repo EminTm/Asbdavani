@@ -34,15 +34,25 @@ enum class RiskProfile(val label: String, val instruction: String) {
 }
 
 @Serializable
+data class AnomalySignal(
+    val title: String = "",
+    val severity: String = "نکته",
+    val description: String = ""
+)
+
+@Serializable
 data class PredictionReport(
     val raceSummary: String = "",
     val trackAndClassNote: String = "",
     val confidenceLevel: String = "متوسط",
     val confidencePercent: Int = 65,
+    val newsAndContextSummary: String = "",
     val tacticalScenario: String = "",
     val topThree: List<TopPick> = emptyList(),
     val darkHorse: DarkHorsePick? = null,
+    val anomalyAlerts: List<AnomalySignal> = emptyList(),
     val horseAnalyses: List<HorseAnalysis> = emptyList(),
+    val searchSources: List<String> = emptyList(),
     val disclaimer: String = "این تحلیل بر اساس داده‌های ورودی و منطق آماری هوش مصنوعی انجام شده و تضمینی برای نتیجه قطعی مسابقه نیست."
 )
 
