@@ -32,6 +32,8 @@ data class MainUiState(
     val urlInput: String = "https://asbdavani.app/racecards",
     val pageTitle: String = "مسابقات اسبدوانی",
     val raceDataInput: String = "",
+    val newsNotesInput: String = "",
+    val useWebSearch: Boolean = true,
     val discoveredLinks: List<DiscoveredLink> = emptyList(),
     val isFetchingSite: Boolean = false,
     val isAnalyzing: Boolean = false,
@@ -72,6 +74,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun updateRaceDataInput(text: String) {
         _uiState.update { it.copy(raceDataInput = text) }
+    }
+
+    fun updateNewsNotes(text: String) {
+        _uiState.update { it.copy(newsNotesInput = text) }
+    }
+
+    fun toggleWebSearch(enabled: Boolean) {
+        _uiState.update { it.copy(useWebSearch = enabled) }
+    }
+
+    fun showStatus(msg: String) {
+        _uiState.update { it.copy(statusMessage = msg, errorMessage = null) }
+    }
+
+    fun showError(msg: String) {
+        _uiState.update { it.copy(errorMessage = msg, statusMessage = null) }
     }
 
     fun clearMessages() {
@@ -165,7 +183,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 it.copy(
                     isAnalyzing = true,
                     errorMessage = null,
-                    statusMessage = "هوش مصنوعی در حال تحلیل آمار اسب‌ها، وزن، مسافت و چابکسوارهاست..."
+                    statusMessage = if (state.useWebSearch) {
+                        "در حال جستجوی اخبار + تحلیل فنی و بررسی الگوهای ناهنجاری..."
+                    } else {
+                        "هوش مصنوعی در حال تحلیل آمار اسب‌ها، وزن، مسافت و تاکتیک‌هاست..."
+                    }
                 )
             }
             analyzer.analyzeRace(
@@ -173,7 +195,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 model = state.selectedModel,
                 riskProfile = state.riskProfile,
                 raceTitle = state.pageTitle,
-                rawRaceData = state.raceDataInput
+                rawRaceData = state.raceDataInput,
+                userNewsNotes = state.newsNotesInput,
+                useWebSearch = state.useWebSearch
             ).fold(
                 onSuccess = { report ->
                     val timeStr = SimpleDateFormat("yyyy/MM/dd - HH:mm", Locale.US)
@@ -191,7 +215,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             isAnalyzing = false,
                             currentReport = report,
                             history = repo.getHistory(),
-                            statusMessage = "تحلیل و پیش‌بینی مسابقه آماده شد!"
+                            statusMessage = "تحلیل کامل مسابقه آماده شد!"
                         )
                     }
                 },
