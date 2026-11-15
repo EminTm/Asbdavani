@@ -33,6 +33,7 @@ import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
@@ -56,6 +57,7 @@ import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -70,6 +72,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -77,6 +80,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.asbai.predictor.model.RiskProfile
 import com.asbai.predictor.ui.components.PredictionResultView
+import com.asbai.predictor.util.PdfExporter
 import com.asbai.predictor.viewmodel.AppTab
 import com.asbai.predictor.viewmodel.MainUiState
 import com.asbai.predictor.viewmodel.MainViewModel
@@ -207,7 +211,9 @@ private fun StatusBanners(
 @Composable
 private fun PredictTab(state: MainUiState, viewModel: MainViewModel) {
     val clipboardManager = LocalClipboardManager.current
+    val context = LocalContext.current
     var showRawData by remember { mutableStateOf(true) }
+    var showNewsNotes by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -333,7 +339,7 @@ private fun PredictTab(state: MainUiState, viewModel: MainViewModel) {
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "اطلاعات خام / متن مسابقه (${state.raceDataInput.length} کاراکتر)",
+                        text = "اطلاعات خام / جدول مسابقه (${state.raceDataInput.length} کاراکتر)",
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold
                     )
@@ -377,6 +383,76 @@ private fun PredictTab(state: MainUiState, viewModel: MainViewModel) {
             }
         }
 
+        // اخبار، جستجوی گوگل و نکات پیست
+        OutlinedCard(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(
+                            Icons.Default.Search,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Column {
+                            Text(
+                                text = "جستجوی زنده اخبار در گوگل",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "بررسی آخرین اخبار، حواشی و پیست قبل از تحلیل",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    Switch(
+                        checked = state.useWebSearch,
+                        onCheckedChange = { viewModel.toggleWebSearch(it) }
+                    )
+                }
+
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { showNewsNotes = !showNewsNotes },
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "افزودن خبر یا نکته پیست (اختیاری)",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Icon(
+                        imageVector = if (showNewsNotes) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                        contentDescription = null
+                    )
+                }
+
+                if (showNewsNotes || state.newsNotesInput.isNotBlank()) {
+                    Spacer(Modifier.height(6.dp))
+                    OutlinedTextField(
+                        value = state.newsNotesInput,
+                        onValueChange = { viewModel.updateNewsNotes(it) },
+                        label = { Text("مثلاً: پیست سنگین است، تغییر چابکسوار لحظه آخری، انصراف اسب ۳...") },
+                        minLines = 2,
+                        maxLines = 4,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
+        }
+
         Button(
             onClick = { viewModel.analyzeCurrentRace() },
             enabled = !state.isAnalyzing && state.raceDataInput.isNotBlank(),
@@ -391,16 +467,28 @@ private fun PredictTab(state: MainUiState, viewModel: MainViewModel) {
                     color = MaterialTheme.colorScheme.onPrimary
                 )
                 Spacer(Modifier.width(10.dp))
-                Text("در حال تحلیل با هوش مصنوعی...")
+                Text("در حال تحلیل و بررسی اخبار...")
             } else {
                 Icon(Icons.Default.AutoAwesome, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
-                Text("شروع پیش‌بینی و آنالیز مسابقه", fontWeight = FontWeight.Bold)
+                Text("شروع پیش‌بینی، اخبار و رادار کورس", fontWeight = FontWeight.Bold)
             }
         }
 
         state.currentReport?.let { report ->
-            PredictionResultView(report = report)
+            PredictionResultView(
+                report = report,
+                onExportPdf = {
+                    PdfExporter.exportAndShare(context, report).fold(
+                        onSuccess = {
+                            viewModel.showStatus("فایل PDF ساخته شد و آماده ارسال است.")
+                        },
+                        onFailure = { err ->
+                            viewModel.showError("خطا در ساخت PDF: ${err.message}")
+                        }
+                    )
+                }
+            )
         }
     }
 }
