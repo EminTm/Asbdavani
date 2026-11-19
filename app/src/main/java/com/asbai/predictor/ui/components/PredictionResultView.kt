@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Article
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.EmojiEvents
@@ -58,6 +59,71 @@ fun PredictionResultView(
             Icon(Icons.Default.Share, contentDescription = null)
         }
 
+        if (report.consensusSummary.isNotBlank() || report.memberOpinions.isNotEmpty()) {
+            ElevatedCard(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.elevatedCardColors(
+                    containerColor = Color(0xFFEAF3FF)
+                )
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.AutoAwesome,
+                            contentDescription = null,
+                            tint = Color(0xFF0E4D92)
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = "مقایسه و اجماع شورای هوش مصنوعی",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF0E4D92)
+                        )
+                    }
+                    if (report.consensusSummary.isNotBlank()) {
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            text = report.consensusSummary,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF0A2E57)
+                        )
+                    }
+                    if (report.memberOpinions.isNotEmpty()) {
+                        Spacer(Modifier.height(8.dp))
+                        report.memberOpinions.forEachIndexed { idx, op ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "${op.providerName} (${op.modelName.substringAfterLast('/')})",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = "#${op.topPickNumber} ${op.topPickName} (${op.topPickWinProb}٪)",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = Color(0xFF0E5A3E),
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            Text(
+                                text = "اطمینان مدل: ${op.confidencePercent}٪ — ${op.summary}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color(0xFF2B3A4A)
+                            )
+                            if (idx < report.memberOpinions.lastIndex) {
+                                HorizontalDivider(modifier = Modifier.padding(vertical = 6.dp))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         ElevatedCard(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.elevatedCardColors(
@@ -71,7 +137,7 @@ fun PredictionResultView(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "گزارش پیش‌بینی هوشمند",
+                        text = "گزارش پیش‌بینی نهایی",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onPrimaryContainer
