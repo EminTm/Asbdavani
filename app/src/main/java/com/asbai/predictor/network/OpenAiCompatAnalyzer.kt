@@ -145,10 +145,15 @@ class OpenAiCompatAnalyzer {
     ): Result<String> = withContext(Dispatchers.IO) {
         runCatching {
             val cleanKey = apiKey.trim()
+            val cleanModel = model.trim()
             if (cleanKey.isBlank()) error("لطفاً ابتدا کلید API مربوط به $providerName را وارد کنید.")
+            val isGroqGptOss = "groq.com" in endpointUrl && "gpt-oss" in cleanModel.lowercase()
             val payload = buildJsonObject {
-                put("model", model.trim())
-                put("max_tokens", 32)
+                put("model", cleanModel)
+                put("max_tokens", 512)
+                if (isGroqGptOss) {
+                    put("reasoning_effort", "low")
+                }
                 putJsonArray("messages") {
                     addJsonObject {
                         put("role", "user")
@@ -163,7 +168,7 @@ class OpenAiCompatAnalyzer {
                 jsonBody = payload.toString(),
                 extraHeaders = extraHeaders
             )
-            "اتصال $providerName با مدل ${model.trim()} برقرار شد (${reply.trim().take(20)})"
+            "اتصال $providerName با مدل $cleanModel برقرار شد (${reply.trim().take(20)})"
         }
     }
 
@@ -184,17 +189,19 @@ class OpenAiCompatAnalyzer {
             val cleanKey = apiKey.trim()
             if (cleanKey.isBlank()) error("کلید $providerName وارد نشده است.")
 
+            val effectiveMaxChars = if ("groq.com" in endpointUrl) minOf(maxDataChars, 7000) else maxDataChars
             val systemPrompt = RacePromptBuilder.buildSystemPrompt(riskProfile)
             val userPrompt = RacePromptBuilder.buildUserPrompt(
                 raceTitle = raceTitle,
                 rawRaceData = rawRaceData,
                 userNewsNotes = userNewsNotes,
                 liveNewsContext = liveNewsContext,
-                maxDataChars = maxDataChars
+                maxDataChars = effectiveMaxChars
             )
 
             val rawReply = try {
                 val payloadWithJsonFormat = buildPayload(
+                    endpointUrl = endpointUrl,
                     model = model.trim(),
                     systemPrompt = systemPrompt,
                     userPrompt = userPrompt,
@@ -205,6 +212,7 @@ class OpenAiCompatAnalyzer {
                 val msg = e.message.orEmpty()
                 if ("400" in msg || "response_format" in msg || "json" in msg.lowercase()) {
                     val fallbackPayload = buildPayload(
+                        endpointUrl = endpointUrl,
                         model = model.trim(),
                         systemPrompt = systemPrompt,
                         userPrompt = userPrompt,
@@ -222,30 +230,38 @@ class OpenAiCompatAnalyzer {
     }
 
     private fun buildPayload(
+        endpointUrl: String,
         model: String,
         systemPrompt: String,
         userPrompt: String,
         forceJsonMode: Boolean
-    ): String = buildJsonObject {
-        put("model", model)
-        put("temperature", 0.3)
-        put("max_tokens", 4096)
-        if (forceJsonMode) {
-            putJsonObject("response_format") {
-                put("type", "json_object")
+    ): String {
+        val isGroq = "groq.com" in endpointUrl
+        val isGroqGptOss = isGroq && "gpt-oss" in model.lowercase()
+        return buildJsonObject {
+            put("model", model)
+            put("temperature", 0.3)
+            put("max_tokens", if (isGroq) 3200 else 4096)
+            if (isGroqGptOss) {
+                put("reasoning_effort", "low")
             }
-        }
-        putJsonArray("messages") {
-            addJsonObject {
-                put("role", "system")
-                put("content", systemPrompt)
+            if (forceJsonMode) {
+                putJsonObject("response_format") {
+                    put("type", "json_object")
+                }
             }
-            addJsonObject {
-                put("role", "user")
-                put("content", userPrompt)
+            putJsonArray("messages") {
+                addJsonObject {
+                    put("role", "system")
+                    put("content", systemPrompt)
+                }
+                addJsonObject {
+                    put("role", "user")
+                    put("content", userPrompt)
+                }
             }
-        }
-    }.toString()
+        }.toString()
+    }
 
     private fun executeChat(
         providerName: String,
@@ -279,7 +295,7 @@ class OpenAiCompatAnalyzer {
                     401, 403 -> "کلید $providerName نامعتبر است یا دسترسی ندارد (${response.code}): ${apiMsg ?: ""}"
                     402 -> "سهمیه/اعتبار $providerName کافی نیست (مدل :free انتخاب کنید)."
                     404 -> "مدل انتخابی در $providerName یافت نشد (404): ${apiMsg ?: ""}"
-                    429 -> "سهمیه درخواست $providerName موقتاً پر شده است (429)."
+                    429 -> "سهمیه درخواست $providerName موقتاً پر شده است (429): ${apiMsg ?: ""}"
                     else -> "خطای $providerName (کد ${response.code}): ${apiMsg ?: bodyString.take(150)}"
                 }
                 error(friendly)
@@ -291,9 +307,12 @@ class OpenAiCompatAnalyzer {
             val message = choices.firstOrNull()?.jsonObject?.get("message")?.jsonObject
                 ?: error("ساختار پیام $providerName خالی بود.")
 
-            val content = message["content"]?.jsonPrimitive?.content.orEmpty().trim()
+            val content = runCatching {
+                message["content"]?.jsonPrimitive?.content
+            }.getOrNull().orEmpty().trim()
+
             if (content.isBlank()) {
-                error("متن خروجی $providerName خالی بود.")
+                error("متن خروجی $providerName خالی بود (احتمالاً مدل تمام سقف توکن را صرف تفکر کرده؛ مدل qwen/qwen3.8-27b را امتحان کنید).")
             }
             return content
         }
