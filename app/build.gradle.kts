@@ -9,15 +9,34 @@ android {
     namespace = "com.asbai.predictor"
     compileSdk = 35
 
+    val runNumber = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1
+
     defaultConfig {
         applicationId = "com.asbai.predictor"
         minSdk = 24
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = runNumber
+        versionName = "1.0.$runNumber"
+    }
+
+    val keystoreFile = rootProject.file("release.keystore")
+    signingConfigs {
+        if (keystoreFile.exists()) {
+            create("fixedDebug") {
+                storeFile = keystoreFile
+                storePassword = System.getenv("KEYSTORE_PASSWORD") ?: "asbdavani1234"
+                keyAlias = System.getenv("KEY_ALIAS") ?: "asbdavani"
+                keyPassword = System.getenv("KEY_PASSWORD") ?: "asbdavani1234"
+            }
+        }
     }
 
     buildTypes {
+        debug {
+            if (keystoreFile.exists()) {
+                signingConfig = signingConfigs.getByName("fixedDebug")
+            }
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(
@@ -54,7 +73,6 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
 
-    // برای اتصال به سایت و هوش مصنوعی Gemini
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.jsoup:jsoup:1.18.1")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
