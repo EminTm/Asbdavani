@@ -10,6 +10,7 @@ android {
     compileSdk = 35
 
     val runNumber = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1
+    val githubRepo = System.getenv("GITHUB_REPOSITORY") ?: ""
 
     defaultConfig {
         applicationId = "com.asbai.predictor"
@@ -17,6 +18,7 @@ android {
         targetSdk = 35
         versionCode = runNumber
         versionName = "1.0.$runNumber"
+        resValue("string", "github_repo", githubRepo)
     }
 
     val keystoreFile = rootProject.file("release.keystore")
