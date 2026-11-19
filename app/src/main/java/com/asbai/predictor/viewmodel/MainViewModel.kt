@@ -13,6 +13,8 @@ import com.asbai.predictor.network.CouncilAnalyzer
 import com.asbai.predictor.network.CouncilConfig
 import com.asbai.predictor.network.GeminiAnalyzer
 import com.asbai.predictor.network.OpenAiCompatAnalyzer
+import com.asbai.predictor.util.AppUpdateInfo
+import com.asbai.predictor.util.AppUpdater
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -51,13 +53,19 @@ data class MainUiState(
     val openRouterApiKey: String = "",
     val openRouterModel: String = SettingsRepository.DEFAULT_OR_MODEL,
     val riskProfile: RiskProfile = RiskProfile.BALANCED,
+    val currentVersionName: String = "1.0",
+    val availableUpdate: AppUpdateInfo? = null,
+    val isCheckingUpdate: Boolean = false,
+    val isDownloadingUpdate: Boolean = false,
+    val updateDownloadProgress: Int = 0,
     val statusMessage: String? = null,
     val errorMessage: String? = null
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val repo = SettingsRepository(application.applicationContext)
+    private val appContext = application.applicationContext
+    private val repo = SettingsRepository(appContext)
     private val scraper = AsbdavaniScraper()
     private val geminiAnalyzer = GeminiAnalyzer()
     private val openAiCompatAnalyzer = OpenAiCompatAnalyzer()
@@ -72,10 +80,96 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             openRouterApiKey = repo.getOpenRouterApiKey(),
             openRouterModel = repo.getOpenRouterModel(),
             riskProfile = repo.getRiskProfile(),
-            history = repo.getHistory()
+            history = repo.getHistory(),
+            currentVersionName = AppUpdater.getCurrentVersionName(appContext)
         )
     )
     val uiState: StateFlow<MainUiState> = _uiState.asStateFlow()
+
+    init {
+        checkForAppUpdate(silent = true)
+    }
+
+    fun checkForAppUpdate(silent: Boolean = false) {
+        viewModelScope.launch {
+            if (!silent) {
+                _uiState.update {
+                    it.copy(isCheckingUpdate = true, errorMessage = null, statusMessage = "در حال بررسی نسخه جدید...")
+                }
+            }
+            AppUpdater.checkForUpdate(appContext).fold(
+                onSuccess = { info ->
+                    _uiState.update {
+                        it.copy(
+                            isCheckingUpdate = false,
+                            availableUpdate = info,
+                            statusMessage = when {
+                                info != null && !silent -> "نسخه جدید ${info.versionName} پیدا شد!"
+                                info == null && !silent -> "شما در حال استفاده از آخرین نسخه (${it.currentVersionName}) هستید."
+                                else -> it.statusMessage
+                            }
+                        )
+                    }
+                },
+                onFailure = { err ->
+                    _uiState.update {
+                        it.copy(
+                            isCheckingUpdate = false,
+                            errorMessage = if (silent) it.errorMessage else (err.message ?: "خطا در بررسی آپدیت"),
+                            statusMessage = if (silent) it.statusMessage else null
+                        )
+                    }
+                }
+            )
+        }
+    }
+
+    fun installAvailableUpdate() {
+        val update = _uiState.value.availableUpdate ?: return
+        viewModelScope.launch {
+            _uiState.update {
+                it.copy(
+                    isDownloadingUpdate = true,
+                    updateDownloadProgress = 0,
+                    errorMessage = null,
+                    statusMessage = "در حال دانلود نسخه ${update.versionName}..."
+                )
+            }
+            AppUpdater.downloadAndInstall(
+                context = appContext,
+                downloadUrl = update.downloadUrl,
+                onProgress = { pct ->
+                    _uiState.update { it.copy(updateDownloadProgress = pct) }
+                }
+            ).fold(
+                onSuccess = { started ->
+                    _uiState.update {
+                        it.copy(
+                            isDownloadingUpdate = false,
+                            statusMessage = if (started) {
+                                "فایل آماده شد؛ روی «به‌روزرسانی» بزنید."
+                            } else {
+                                "ابتدا مجوز «نصب از این منبع» را فعال کنید و دوباره دکمه نصب را بزنید."
+                            }
+                        )
+                    }
+                },
+                onFailure = { err ->
+                    _uiState.update {
+                        it.copy(
+                            isDownloadingUpdate = false,
+                            errorMessage = err.message ?: "خطا در دانلود یا نصب آپدیت",
+                            statusMessage = null
+                        )
+                    }
+                }
+            )
+        }
+    }
+
+    fun dismissUpdateBanner() {
+        _uiState.update { it.copy(availableUpdate = null) }
+    }
 
     fun selectTab(tab: AppTab) {
         _uiState.update { it.copy(selectedTab = tab) }
