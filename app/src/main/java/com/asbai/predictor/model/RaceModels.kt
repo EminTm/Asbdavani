@@ -41,11 +41,24 @@ data class AnomalySignal(
 )
 
 @Serializable
+data class AiMemberOpinion(
+    val providerName: String = "",
+    val modelName: String = "",
+    val topPickNumber: String = "-",
+    val topPickName: String = "",
+    val topPickWinProb: Int = 0,
+    val confidencePercent: Int = 0,
+    val summary: String = ""
+)
+
+@Serializable
 data class PredictionReport(
     val raceSummary: String = "",
     val trackAndClassNote: String = "",
     val confidenceLevel: String = "متوسط",
     val confidencePercent: Int = 65,
+    val consensusSummary: String = "",
+    val memberOpinions: List<AiMemberOpinion> = emptyList(),
     val newsAndContextSummary: String = "",
     val tacticalScenario: String = "",
     val topThree: List<TopPick> = emptyList(),
@@ -53,7 +66,7 @@ data class PredictionReport(
     val anomalyAlerts: List<AnomalySignal> = emptyList(),
     val horseAnalyses: List<HorseAnalysis> = emptyList(),
     val searchSources: List<String> = emptyList(),
-    val disclaimer: String = "این تحلیل بر اساس داده‌های ورودی و منطق آماری هوش مصنوعی انجام شده و تضمینی برای نتیجه قطعی مسابقه نیست."
+    val disclaimer: String = "این پیش‌بینی یک تحلیل آماری و خبری توسط هوش مصنوعی است؛ تشخیص ناهنجاری‌ها صرفاً بررسی الگوهای مسابقه‌ای است و به معنای اثبات تخلف نیست."
 )
 
 @Serializable
