@@ -9,7 +9,10 @@ import com.asbai.predictor.model.PredictionReport
 import com.asbai.predictor.model.RiskProfile
 import com.asbai.predictor.model.SavedPrediction
 import com.asbai.predictor.network.AsbdavaniScraper
+import com.asbai.predictor.network.CouncilAnalyzer
+import com.asbai.predictor.network.CouncilConfig
 import com.asbai.predictor.network.GeminiAnalyzer
+import com.asbai.predictor.network.OpenAiCompatAnalyzer
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -43,6 +46,10 @@ data class MainUiState(
     val history: List<SavedPrediction> = emptyList(),
     val apiKey: String = "",
     val selectedModel: String = SettingsRepository.DEFAULT_MODEL,
+    val groqApiKey: String = "",
+    val groqModel: String = SettingsRepository.DEFAULT_GROQ_MODEL,
+    val openRouterApiKey: String = "",
+    val openRouterModel: String = SettingsRepository.DEFAULT_OR_MODEL,
     val riskProfile: RiskProfile = RiskProfile.BALANCED,
     val statusMessage: String? = null,
     val errorMessage: String? = null
@@ -52,12 +59,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repo = SettingsRepository(application.applicationContext)
     private val scraper = AsbdavaniScraper()
-    private val analyzer = GeminiAnalyzer()
+    private val geminiAnalyzer = GeminiAnalyzer()
+    private val openAiCompatAnalyzer = OpenAiCompatAnalyzer()
+    private val councilAnalyzer = CouncilAnalyzer(geminiAnalyzer, openAiCompatAnalyzer)
 
     private val _uiState = MutableStateFlow(
         MainUiState(
             apiKey = repo.getApiKey(),
             selectedModel = repo.getModel(),
+            groqApiKey = repo.getGroqApiKey(),
+            groqModel = repo.getGroqModel(),
+            openRouterApiKey = repo.getOpenRouterApiKey(),
+            openRouterModel = repo.getOpenRouterModel(),
             riskProfile = repo.getRiskProfile(),
             history = repo.getHistory()
         )
@@ -151,21 +164,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 statusMessage = "اطلاعات صفحه زنده استخراج شد!"
             )
         }
-        if (_uiState.value.apiKey.isNotBlank() && extractedText.isNotBlank()) {
+        val state = _uiState.value
+        val hasAnyKey = state.apiKey.isNotBlank() || state.groqApiKey.isNotBlank() || state.openRouterApiKey.isNotBlank()
+        if (hasAnyKey && extractedText.isNotBlank()) {
             analyzeCurrentRace()
-        } else if (_uiState.value.apiKey.isBlank()) {
+        } else if (!hasAnyKey) {
             _uiState.update {
-                it.copy(errorMessage = "اطلاعات استخراج شد؛ برای شروع تحلیل، کلید API جمنای را در تب تنظیمات وارد کنید.")
+                it.copy(errorMessage = "اطلاعات استخراج شد؛ برای شروع تحلیل حداقل یک کلید هوش مصنوعی در تنظیمات وارد کنید.")
             }
         }
     }
 
     fun analyzeCurrentRace() {
         val state = _uiState.value
-        if (state.apiKey.isBlank()) {
+        val activeMembers = buildList {
+            if (state.apiKey.isNotBlank()) add("Gemini")
+            if (state.groqApiKey.isNotBlank()) add("Groq")
+            if (state.openRouterApiKey.isNotBlank()) add("OpenRouter")
+        }
+
+        if (activeMembers.isEmpty()) {
             _uiState.update {
                 it.copy(
-                    errorMessage = "ابتدا کلید هوش مصنوعی را در تب تنظیمات ثبت کنید.",
+                    errorMessage = "ابتدا حداقل یک کلید هوش مصنوعی در تب تنظیمات ثبت کنید.",
                     selectedTab = AppTab.SETTINGS
                 )
             }
@@ -183,23 +204,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 it.copy(
                     isAnalyzing = true,
                     errorMessage = null,
-                    statusMessage = if (state.useWebSearch) {
-                        "در حال جستجوی اخبار + تحلیل فنی و بررسی الگوهای ناهنجاری..."
-                    } else {
-                        "هوش مصنوعی در حال تحلیل آمار اسب‌ها، وزن، مسافت و تاکتیک‌هاست..."
-                    }
+                    statusMessage = "شورای هوش مصنوعی (${activeMembers.joinToString(" + ")}) همزمان در حال تحلیل و مقایسه است..."
                 )
             }
-            analyzer.analyzeRace(
-                apiKey = state.apiKey,
-                model = state.selectedModel,
+
+            val config = CouncilConfig(
+                geminiKey = state.apiKey,
+                geminiModel = state.selectedModel,
+                groqKey = state.groqApiKey,
+                groqModel = state.groqModel,
+                openRouterKey = state.openRouterApiKey,
+                openRouterModel = state.openRouterModel
+            )
+
+            councilAnalyzer.analyzeWithCouncil(
+                config = config,
                 riskProfile = state.riskProfile,
                 raceTitle = state.pageTitle,
                 rawRaceData = state.raceDataInput,
                 userNewsNotes = state.newsNotesInput,
                 useWebSearch = state.useWebSearch
             ).fold(
-                onSuccess = { report ->
+                onSuccess = { output ->
                     val timeStr = SimpleDateFormat("yyyy/MM/dd - HH:mm", Locale.US)
                         .format(Date(System.currentTimeMillis()))
                     val saved = SavedPrediction(
@@ -207,15 +233,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         timestamp = timeStr,
                         sourceUrl = state.urlInput,
                         rawExcerpt = state.raceDataInput.take(300),
-                        report = report
+                        report = output.report
                     )
                     repo.addHistory(saved)
+                    val warnNote = if (output.memberWarnings.isNotEmpty()) {
+                        "\n(هشدار برخی اعضا: ${output.memberWarnings.joinToString(" | ")})"
+                    } else ""
                     _uiState.update {
                         it.copy(
                             isAnalyzing = false,
-                            currentReport = report,
+                            currentReport = output.report,
                             history = repo.getHistory(),
-                            statusMessage = "تحلیل کامل مسابقه آماده شد!"
+                            statusMessage = "تحلیل شورای هوش مصنوعی آماده شد (${output.report.memberOpinions.size} مدل فعال)!$warnNote"
                         )
                     }
                 },
@@ -223,7 +252,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     _uiState.update {
                         it.copy(
                             isAnalyzing = false,
-                            errorMessage = err.message ?: "خطا در تحلیل هوش مصنوعی",
+                            errorMessage = err.message ?: "خطا در تحلیل شورا",
                             statusMessage = null
                         )
                     }
@@ -232,50 +261,109 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun saveSettings(apiKey: String, model: String, riskProfile: RiskProfile) {
-        repo.saveApiKey(apiKey)
-        repo.saveModel(model)
+    fun saveAllSettings(
+        geminiKey: String,
+        geminiModel: String,
+        groqKey: String,
+        groqModel: String,
+        openRouterKey: String,
+        openRouterModel: String,
+        riskProfile: RiskProfile
+    ) {
+        repo.saveApiKey(geminiKey)
+        repo.saveModel(geminiModel)
+        repo.saveGroqApiKey(groqKey)
+        repo.saveGroqModel(groqModel)
+        repo.saveOpenRouterApiKey(openRouterKey)
+        repo.saveOpenRouterModel(openRouterModel)
         repo.saveRiskProfile(riskProfile)
+
         _uiState.update {
             it.copy(
                 apiKey = repo.getApiKey(),
                 selectedModel = repo.getModel(),
+                groqApiKey = repo.getGroqApiKey(),
+                groqModel = repo.getGroqModel(),
+                openRouterApiKey = repo.getOpenRouterApiKey(),
+                openRouterModel = repo.getOpenRouterModel(),
                 riskProfile = repo.getRiskProfile(),
-                statusMessage = "تنظیمات با موفقیت ذخیره شد.",
+                statusMessage = "تنظیمات شورای هوش مصنوعی ذخیره شد.",
                 errorMessage = null
             )
         }
     }
 
-    fun testApiKey(apiKey: String, model: String) {
+    fun testGeminiKey(apiKey: String, model: String) {
         viewModelScope.launch {
             _uiState.update {
-                it.copy(
-                    isTestingKey = true,
-                    errorMessage = null,
-                    statusMessage = "در حال تست اتصال به جمنای..."
-                )
+                it.copy(isTestingKey = true, errorMessage = null, statusMessage = "در حال تست Gemini...")
             }
-            analyzer.testConnection(apiKey, model).fold(
+            geminiAnalyzer.testConnection(apiKey, model).fold(
                 onSuccess = { msg ->
                     repo.saveApiKey(apiKey)
                     repo.saveModel(model)
                     _uiState.update {
-                        it.copy(
-                            isTestingKey = false,
-                            apiKey = repo.getApiKey(),
-                            selectedModel = repo.getModel(),
-                            statusMessage = msg
-                        )
+                        it.copy(isTestingKey = false, apiKey = repo.getApiKey(), selectedModel = repo.getModel(), statusMessage = msg)
                     }
                 },
                 onFailure = { err ->
                     _uiState.update {
-                        it.copy(
-                            isTestingKey = false,
-                            errorMessage = err.message ?: "تست اتصال ناموفق بود.",
-                            statusMessage = null
-                        )
+                        it.copy(isTestingKey = false, errorMessage = err.message ?: "تست Gemini ناموفق بود.", statusMessage = null)
+                    }
+                }
+            )
+        }
+    }
+
+    fun testGroqKey(apiKey: String, model: String) {
+        viewModelScope.launch {
+            _uiState.update {
+                it.copy(isTestingKey = true, errorMessage = null, statusMessage = "در حال تست Groq...")
+            }
+            openAiCompatAnalyzer.testConnection(
+                providerName = "Groq",
+                endpointUrl = CouncilAnalyzer.GROQ_ENDPOINT,
+                apiKey = apiKey,
+                model = model
+            ).fold(
+                onSuccess = { msg ->
+                    repo.saveGroqApiKey(apiKey)
+                    repo.saveGroqModel(model)
+                    _uiState.update {
+                        it.copy(isTestingKey = false, groqApiKey = repo.getGroqApiKey(), groqModel = repo.getGroqModel(), statusMessage = msg)
+                    }
+                },
+                onFailure = { err ->
+                    _uiState.update {
+                        it.copy(isTestingKey = false, errorMessage = err.message ?: "تست Groq ناموفق بود.", statusMessage = null)
+                    }
+                }
+            )
+        }
+    }
+
+    fun testOpenRouterKey(apiKey: String, model: String) {
+        viewModelScope.launch {
+            _uiState.update {
+                it.copy(isTestingKey = true, errorMessage = null, statusMessage = "در حال تست OpenRouter...")
+            }
+            openAiCompatAnalyzer.testConnection(
+                providerName = "OpenRouter",
+                endpointUrl = CouncilAnalyzer.OPENROUTER_ENDPOINT,
+                apiKey = apiKey,
+                model = model,
+                extraHeaders = mapOf("HTTP-Referer" to "https://asbdavani.app", "X-Title" to "AsbDavaniAI")
+            ).fold(
+                onSuccess = { msg ->
+                    repo.saveOpenRouterApiKey(apiKey)
+                    repo.saveOpenRouterModel(model)
+                    _uiState.update {
+                        it.copy(isTestingKey = false, openRouterApiKey = repo.getOpenRouterApiKey(), openRouterModel = repo.getOpenRouterModel(), statusMessage = msg)
+                    }
+                },
+                onFailure = { err ->
+                    _uiState.update {
+                        it.copy(isTestingKey = false, errorMessage = err.message ?: "تست OpenRouter ناموفق بود.", statusMessage = null)
                     }
                 }
             )
