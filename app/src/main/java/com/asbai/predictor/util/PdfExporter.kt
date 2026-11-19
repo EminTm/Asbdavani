@@ -2,7 +2,6 @@ package com.asbai.predictor.util
 
 import android.content.Context
 import android.content.Intent
-import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Typeface
@@ -129,7 +128,6 @@ object PdfExporter {
             y += layout.height + extraBottom
         }
 
-        // سربرگ سبز بالای صفحه اول
         val headerHeight = 64f
         canvas.drawRoundRect(MARGIN, y, PAGE_WIDTH - MARGIN, y + headerHeight, 8f, 8f, headerBgPaint)
         val headerTitle = buildLayout("گزارش پیش‌بینی هوشمند اسبدوانی", titlePaint, CONTENT_WIDTH - 24)
@@ -147,14 +145,29 @@ object PdfExporter {
         canvas.restore()
         y += headerHeight + 14f
 
-        // خلاصه کورس
+        if (report.consensusSummary.isNotBlank() || report.memberOpinions.isNotEmpty()) {
+            drawTextBlock("نتیجه شورای هوش مصنوعی", headingPaint, 4f)
+            if (report.consensusSummary.isNotBlank()) {
+                drawTextBlock(report.consensusSummary, boldPaint, 4f)
+            }
+            report.memberOpinions.forEach { op ->
+                drawTextBlock(
+                    "• ${op.providerName} (${op.modelName}): انتخاب اول #${op.topPickNumber} ${op.topPickName} (${op.topPickWinProb}٪) — اطمینان ${op.confidencePercent}٪",
+                    bodyPaint,
+                    3f
+                )
+            }
+            ensureSpace(8f)
+            canvas.drawLine(MARGIN, y, PAGE_WIDTH - MARGIN, y, dividerPaint)
+            y += 10f
+        }
+
         drawTextBlock("مشخصات کورس", headingPaint, 4f)
         drawTextBlock(report.raceSummary, boldPaint, 4f)
         if (report.trackAndClassNote.isNotBlank()) {
             drawTextBlock(report.trackAndClassNote, bodyPaint, 10f)
         }
 
-        // اخبار و حواشی
         if (report.newsAndContextSummary.isNotBlank()) {
             val newsLayout = buildLayout(report.newsAndContextSummary, bodyPaint, CONTENT_WIDTH - 16)
             ensureSpace(newsLayout.height + 34f)
@@ -176,7 +189,6 @@ object PdfExporter {
             y += newsLayout.height + 14f
         }
 
-        // سه‌تای اول
         if (report.topThree.isNotEmpty()) {
             drawTextBlock("احتمالی‌های سه‌تای اول (سکو)", headingPaint, 6f)
             report.topThree.forEach { pick ->
@@ -189,7 +201,6 @@ object PdfExporter {
             y += 10f
         }
 
-        // سناریو و اسب شگفتی‌ساز
         if (report.tacticalScenario.isNotBlank()) {
             drawTextBlock("سناریوی تاکتیکی کورس", headingPaint, 4f)
             drawTextBlock(report.tacticalScenario, bodyPaint, 10f)
@@ -206,7 +217,6 @@ object PdfExporter {
             }
         }
 
-        // رادار ناهنجاری و تاکتیک تیمی
         if (report.anomalyAlerts.isNotEmpty()) {
             drawTextBlock("رادار ناهنجاری‌ها، تاکتیک تیمی و ریسک‌ها", headingPaint, 6f)
             report.anomalyAlerts.forEach { alert ->
@@ -230,7 +240,6 @@ object PdfExporter {
             }
         }
 
-        // آنالیز تک‌تک اسب‌ها
         if (report.horseAnalyses.isNotEmpty()) {
             drawTextBlock("آنالیز کامل همه اسب‌های حاضر", headingPaint, 6f)
             report.horseAnalyses
