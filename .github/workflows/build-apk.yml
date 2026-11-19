@@ -8,6 +8,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout repository
@@ -52,3 +54,18 @@ jobs:
         with:
           name: AsbDavaniAI-debug-apk
           path: app/build/outputs/apk/debug/*.apk
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: v1.0.${{ github.run_number }}
+        run: |
+          APK_FILE=$(ls app/build/outputs/apk/debug/*.apk | head -n 1)
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$APK_FILE" --clobber
+          else
+            gh release create "$TAG" "$APK_FILE" \
+              --title "Version 1.0.${{ github.run_number }}" \
+              --notes "Auto build #${{ github.run_number }}" \
+              --latest
+          fi
