@@ -82,6 +82,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.asbai.predictor.model.RiskProfile
 import com.asbai.predictor.ui.components.PredictionResultView
+import com.asbai.predictor.util.AppUpdateInfo
 import com.asbai.predictor.util.PdfExporter
 import com.asbai.predictor.viewmodel.AppTab
 import com.asbai.predictor.viewmodel.MainUiState
@@ -132,6 +133,16 @@ fun MainScreen(viewModel: MainViewModel) {
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
+            state.availableUpdate?.let { update ->
+                UpdateAvailableBanner(
+                    update = update,
+                    isDownloading = state.isDownloadingUpdate,
+                    progress = state.updateDownloadProgress,
+                    onInstallClick = { viewModel.installAvailableUpdate() },
+                    onDismiss = { viewModel.dismissUpdateBanner() }
+                )
+            }
+
             StatusBanners(
                 statusMessage = state.statusMessage,
                 errorMessage = state.errorMessage,
@@ -148,6 +159,59 @@ fun MainScreen(viewModel: MainViewModel) {
                 )
                 AppTab.HISTORY -> HistoryTab(state = state, viewModel = viewModel)
                 AppTab.SETTINGS -> SettingsTab(state = state, viewModel = viewModel)
+            }
+        }
+    }
+}
+
+@Composable
+private fun UpdateAvailableBanner(
+    update: AppUpdateInfo,
+    isDownloading: Boolean,
+    progress: Int,
+    onInstallClick: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    ElevatedCard(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        colors = CardDefaults.elevatedCardColors(
+            containerColor = MaterialTheme.colorScheme.secondaryContainer
+        )
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = "نسخه جدید ${update.versionName} آماده است!",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f)
+                )
+                if (!isDownloading) {
+                    Button(onClick = onInstallClick) {
+                        Text("نصب آپدیت")
+                    }
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Default.Close, contentDescription = "بستن")
+                    }
+                }
+            }
+            if (isDownloading) {
+                Spacer(Modifier.height(6.dp))
+                LinearProgressIndicator(
+                    progress = { (progress.coerceIn(0, 100)) / 100f },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = "در حال دانلود... $progress٪",
+                    style = MaterialTheme.typography.labelSmall
+                )
             }
         }
     }
@@ -719,6 +783,54 @@ private fun SettingsTab(state: MainUiState, viewModel: MainViewModel) {
             .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
+        // کارت بررسی و نصب آپدیت خودکار
+        ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(14.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(
+                            text = "به‌روزرسانی خودکار برنامه",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "نسخه فعلی: ${state.currentVersionName}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    OutlinedButton(
+                        onClick = { viewModel.checkForAppUpdate(silent = false) },
+                        enabled = !state.isCheckingUpdate && !state.isDownloadingUpdate
+                    ) {
+                        Icon(Icons.Default.Refresh, contentDescription = null)
+                        Spacer(Modifier.width(6.dp))
+                        Text(if (state.isCheckingUpdate) "در حال بررسی..." else "بررسی آپدیت")
+                    }
+                }
+                state.availableUpdate?.let { upd ->
+                    Spacer(Modifier.height(10.dp))
+                    Button(
+                        onClick = { viewModel.installAvailableUpdate() },
+                        enabled = !state.isDownloadingUpdate,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            if (state.isDownloadingUpdate) {
+                                "در حال دانلود (${state.updateDownloadProgress}٪)..."
+                            } else {
+                                "دانلود و نصب نسخه ${upd.versionName}"
+                            }
+                        )
+                    }
+                }
+            }
+        }
+
         ProviderSettingsCard(
             title = "۱. Google Gemini (رایگان + جستجوی اخبار)",
             helperText = "کلید رایگان از aistudio.google.com/apikey",
@@ -745,8 +857,9 @@ private fun SettingsTab(state: MainUiState, viewModel: MainViewModel) {
             model = groqModelInput,
             onModelChange = { groqModelInput = it },
             presetModels = listOf(
-                "openai/gpt-oss-120b" to "قدرتمند ۱۲۰B (پیشنهادی)",
-                "openai/gpt-oss-20b" to "بسیار سریع ۲۰B"
+                "openai/gpt-oss-120b" to "قدرتمند ۱۲۰B",
+                "qwen/qwen3.8-27b" to "عالی در فارسی و JSON",
+                "openai/gpt-oss-20b" to "سریع ۲۰B"
             ),
             isTesting = state.isTestingKey,
             onTestClick = { viewModel.testGroqKey(groqKeyInput, groqModelInput) }
@@ -761,7 +874,8 @@ private fun SettingsTab(state: MainUiState, viewModel: MainViewModel) {
             model = orModelInput,
             onModelChange = { orModelInput = it },
             presetModels = listOf(
-                "openrouter/free" to "انتخاب خودکار بهترین مدل رایگان"
+                "nvidia/nemotron-3.5-super-vl:free" to "مدل قدرتمند انویدیا (پیشنهادی)",
+                "openrouter/free" to "انتخاب خودکار رایگان"
             ),
             isTesting = state.isTestingKey,
             onTestClick = { viewModel.testOpenRouterKey(orKeyInput, orModelInput) }
