@@ -23,6 +23,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Delete
@@ -71,6 +72,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -96,7 +98,7 @@ fun MainScreen(viewModel: MainViewModel) {
             TopAppBar(
                 title = {
                     Text(
-                        text = "پیش‌بینی هوشمند اسبدوانی",
+                        text = "شورای هوشمند اسبدوانی",
                         fontWeight = FontWeight.Bold
                     )
                 },
@@ -215,6 +217,8 @@ private fun PredictTab(state: MainUiState, viewModel: MainViewModel) {
     var showRawData by remember { mutableStateOf(true) }
     var showNewsNotes by remember { mutableStateOf(false) }
 
+    val hasAnyKey = state.apiKey.isNotBlank() || state.groqApiKey.isNotBlank() || state.openRouterApiKey.isNotBlank()
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -222,26 +226,29 @@ private fun PredictTab(state: MainUiState, viewModel: MainViewModel) {
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        if (state.apiKey.isBlank()) {
-            ElevatedCard(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.elevatedCardColors(
-                    containerColor = MaterialTheme.colorScheme.secondaryContainer
-                )
+        ElevatedCard(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.elevatedCardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant
+            )
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(
-                    modifier = Modifier.padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = "کلید هوش مصنوعی جمنای هنوز ثبت نشده است.",
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.weight(1f)
-                    )
-                    TextButton(onClick = { viewModel.selectTab(AppTab.SETTINGS) }) {
-                        Text("ثبت کلید")
-                    }
+                    CouncilMemberBadge("Gemini", state.apiKey.isNotBlank())
+                    CouncilMemberBadge("Groq", state.groqApiKey.isNotBlank())
+                    CouncilMemberBadge("OpenRouter", state.openRouterApiKey.isNotBlank())
+                }
+                TextButton(onClick = { viewModel.selectTab(AppTab.SETTINGS) }) {
+                    Text(if (hasAnyKey) "تنظیم کلیدها" else "ثبت کلید")
                 }
             }
         }
@@ -383,7 +390,6 @@ private fun PredictTab(state: MainUiState, viewModel: MainViewModel) {
             }
         }
 
-        // اخبار، جستجوی گوگل و نکات پیست
         OutlinedCard(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(12.dp)) {
                 Row(
@@ -408,7 +414,7 @@ private fun PredictTab(state: MainUiState, viewModel: MainViewModel) {
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                text = "بررسی آخرین اخبار، حواشی و پیست قبل از تحلیل",
+                                text = "توسط Gemini جستجو و با کل شورا به اشتراک گذاشته می‌شود",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -467,11 +473,11 @@ private fun PredictTab(state: MainUiState, viewModel: MainViewModel) {
                     color = MaterialTheme.colorScheme.onPrimary
                 )
                 Spacer(Modifier.width(10.dp))
-                Text("در حال تحلیل و بررسی اخبار...")
+                Text("شورا در حال تحلیل همزمان...")
             } else {
                 Icon(Icons.Default.AutoAwesome, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
-                Text("شروع پیش‌بینی، اخبار و رادار کورس", fontWeight = FontWeight.Bold)
+                Text("تحلیل همزمان با شورای هوش مصنوعی", fontWeight = FontWeight.Bold)
             }
         }
 
@@ -490,6 +496,25 @@ private fun PredictTab(state: MainUiState, viewModel: MainViewModel) {
                 }
             )
         }
+    }
+}
+
+@Composable
+private fun CouncilMemberBadge(name: String, active: Boolean) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Icon(
+            imageVector = Icons.Default.CheckCircle,
+            contentDescription = null,
+            tint = if (active) Color(0xFF1B8A5A) else Color(0xFF9E9E9E),
+            modifier = Modifier.width(15.dp).height(15.dp)
+        )
+        Spacer(Modifier.width(3.dp))
+        Text(
+            text = name,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
+            color = if (active) MaterialTheme.colorScheme.onSurface else Color(0xFF757575)
+        )
     }
 }
 
@@ -676,15 +701,16 @@ private fun HistoryTab(state: MainUiState, viewModel: MainViewModel) {
 
 @Composable
 private fun SettingsTab(state: MainUiState, viewModel: MainViewModel) {
-    var apiKeyInput by remember(state.apiKey) { mutableStateOf(state.apiKey) }
-    var modelInput by remember(state.selectedModel) { mutableStateOf(state.selectedModel) }
-    var selectedRisk by remember(state.riskProfile) { mutableStateOf(state.riskProfile) }
-    var showKey by remember { mutableStateOf(false) }
+    var geminiKeyInput by remember(state.apiKey) { mutableStateOf(state.apiKey) }
+    var geminiModelInput by remember(state.selectedModel) { mutableStateOf(state.selectedModel) }
 
-    val presetModels = listOf(
-        "gemini-3.5-flash-lite" to "سریع و اقتصادی (پیشنهادی)",
-        "gemini-3.8-flash" to "تحلیل عمیق‌تر و دقیق‌تر"
-    )
+    var groqKeyInput by remember(state.groqApiKey) { mutableStateOf(state.groqApiKey) }
+    var groqModelInput by remember(state.groqModel) { mutableStateOf(state.groqModel) }
+
+    var orKeyInput by remember(state.openRouterApiKey) { mutableStateOf(state.openRouterApiKey) }
+    var orModelInput by remember(state.openRouterModel) { mutableStateOf(state.openRouterModel) }
+
+    var selectedRisk by remember(state.riskProfile) { mutableStateOf(state.riskProfile) }
 
     Column(
         modifier = Modifier
@@ -693,75 +719,58 @@ private fun SettingsTab(state: MainUiState, viewModel: MainViewModel) {
             .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.padding(14.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Key, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        text = "کلید هوش مصنوعی Gemini",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    text = "می‌توانید از سایت aistudio.google.com یک کلید رایگان بگیرید و اینجا وارد کنید. کلید فقط روی گوشی شما ذخیره می‌شود.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(Modifier.height(10.dp))
-                OutlinedTextField(
-                    value = apiKeyInput,
-                    onValueChange = { apiKeyInput = it },
-                    label = { Text("Gemini API Key") },
-                    singleLine = true,
-                    visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
-                    trailingIcon = {
-                        IconButton(onClick = { showKey = !showKey }) {
-                            Icon(
-                                imageVector = if (showKey) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                                contentDescription = "نمایش کلید"
-                            )
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                )
+        ProviderSettingsCard(
+            title = "۱. Google Gemini (رایگان + جستجوی اخبار)",
+            helperText = "کلید رایگان از aistudio.google.com/apikey",
+            keyLabel = "Gemini API Key",
+            apiKey = geminiKeyInput,
+            onApiKeyChange = { geminiKeyInput = it },
+            model = geminiModelInput,
+            onModelChange = { geminiModelInput = it },
+            presetModels = listOf(
+                "gemini-3.5-flash-lite" to "سریع و سبک",
+                "gemini-3.7-flash" to "متعادل",
+                "gemini-3.8-flash" to "دقیق‌تر"
+            ),
+            isTesting = state.isTestingKey,
+            onTestClick = { viewModel.testGeminiKey(geminiKeyInput, geminiModelInput) }
+        )
 
-                Spacer(Modifier.height(10.dp))
-                Text(
-                    text = "انتخاب مدل هوش مصنوعی:",
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.Bold
-                )
-                Spacer(Modifier.height(6.dp))
-                Row(
-                    modifier = Modifier.horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    presetModels.forEach { (id, desc) ->
-                        FilterChip(
-                            selected = modelInput == id,
-                            onClick = { modelInput = id },
-                            label = { Text("$id ($desc)") }
-                        )
-                    }
-                }
-                Spacer(Modifier.height(6.dp))
-                OutlinedTextField(
-                    value = modelInput,
-                    onValueChange = { modelInput = it },
-                    label = { Text("نام مدل") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
-        }
+        ProviderSettingsCard(
+            title = "۲. Groq (رایگان دائمی و فوق‌سریع)",
+            helperText = "کلید رایگان از console.groq.com/keys (شروع با gsk_)",
+            keyLabel = "Groq API Key",
+            apiKey = groqKeyInput,
+            onApiKeyChange = { groqKeyInput = it },
+            model = groqModelInput,
+            onModelChange = { groqModelInput = it },
+            presetModels = listOf(
+                "openai/gpt-oss-120b" to "قدرتمند ۱۲۰B (پیشنهادی)",
+                "openai/gpt-oss-20b" to "بسیار سریع ۲۰B"
+            ),
+            isTesting = state.isTestingKey,
+            onTestClick = { viewModel.testGroqKey(groqKeyInput, groqModelInput) }
+        )
+
+        ProviderSettingsCard(
+            title = "۳. OpenRouter (رایگان، ۵۰ تحلیل روزانه)",
+            helperText = "کلید رایگان از openrouter.ai/keys (شروع با sk-or-v1-)",
+            keyLabel = "OpenRouter API Key",
+            apiKey = orKeyInput,
+            onApiKeyChange = { orKeyInput = it },
+            model = orModelInput,
+            onModelChange = { orModelInput = it },
+            presetModels = listOf(
+                "openrouter/free" to "انتخاب خودکار بهترین مدل رایگان"
+            ),
+            isTesting = state.isTestingKey,
+            onTestClick = { viewModel.testOpenRouterKey(orKeyInput, orModelInput) }
+        )
 
         ElevatedCard(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(14.dp)) {
                 Text(
-                    text = "استراتژی پیش‌بینی",
+                    text = "استراتژی پیش‌بینی شورا",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
@@ -785,29 +794,108 @@ private fun SettingsTab(state: MainUiState, viewModel: MainViewModel) {
             }
         }
 
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        Button(
+            onClick = {
+                viewModel.saveAllSettings(
+                    geminiKey = geminiKeyInput,
+                    geminiModel = geminiModelInput,
+                    groqKey = groqKeyInput,
+                    groqModel = groqModelInput,
+                    openRouterKey = orKeyInput,
+                    openRouterModel = orModelInput,
+                    riskProfile = selectedRisk
+                )
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(50.dp)
         ) {
-            Button(
-                onClick = { viewModel.saveSettings(apiKeyInput, modelInput, selectedRisk) },
-                modifier = Modifier.weight(1f)
-            ) {
-                Text("ذخیره تنظیمات")
+            Text("ذخیره همه تنظیمات", fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@Composable
+private fun ProviderSettingsCard(
+    title: String,
+    helperText: String,
+    keyLabel: String,
+    apiKey: String,
+    onApiKeyChange: (String) -> Unit,
+    model: String,
+    onModelChange: (String) -> Unit,
+    presetModels: List<Pair<String, String>>,
+    isTesting: Boolean,
+    onTestClick: () -> Unit
+) {
+    var showKey by remember { mutableStateOf(false) }
+
+    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Key, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold
+                )
             }
-            OutlinedButton(
-                onClick = { viewModel.testApiKey(apiKeyInput, modelInput) },
-                enabled = !state.isTestingKey,
-                modifier = Modifier.weight(1f)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = helperText,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
+                value = apiKey,
+                onValueChange = onApiKeyChange,
+                label = { Text(keyLabel) },
+                singleLine = true,
+                visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
+                trailingIcon = {
+                    IconButton(onClick = { showKey = !showKey }) {
+                        Icon(
+                            imageVector = if (showKey) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                            contentDescription = "نمایش کلید"
+                        )
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                if (state.isTestingKey) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.width(16.dp).height(16.dp),
-                        strokeWidth = 2.dp
+                presetModels.forEach { (id, desc) ->
+                    FilterChip(
+                        selected = model == id,
+                        onClick = { onModelChange(id) },
+                        label = { Text("$id ($desc)") }
                     )
-                    Spacer(Modifier.width(6.dp))
                 }
-                Text("تست اتصال")
+            }
+            Spacer(Modifier.height(6.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedTextField(
+                    value = model,
+                    onValueChange = onModelChange,
+                    label = { Text("نام مدل") },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f)
+                )
+                OutlinedButton(
+                    onClick = onTestClick,
+                    enabled = !isTesting
+                ) {
+                    Text("تست")
+                }
             }
         }
     }
