@@ -7,6 +7,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -199,18 +200,21 @@ class OpenAiCompatAnalyzer {
                 maxDataChars = effectiveMaxChars
             )
 
-            val rawReply = try {
-                val payloadWithJsonFormat = buildPayload(
+            try {
+                val payload = buildPayload(
                     endpointUrl = endpointUrl,
                     model = model.trim(),
                     systemPrompt = systemPrompt,
                     userPrompt = userPrompt,
                     forceJsonMode = true
                 )
-                executeChat(providerName, endpointUrl, cleanKey, payloadWithJsonFormat, extraHeaders)
+                val reply = executeChat(providerName, endpointUrl, cleanKey, payload, extraHeaders)
+                val pureJson = RacePromptBuilder.extractPureJson(reply)
+                json.decodeFromString<PredictionReport>(pureJson)
             } catch (e: Exception) {
                 val msg = e.message.orEmpty()
-                if ("400" in msg || "response_format" in msg || "json" in msg.lowercase()) {
+                val nonRetryable = "401" in msg || "402" in msg || "403" in msg || "429" in msg
+                if (!nonRetryable) {
                     val fallbackPayload = buildPayload(
                         endpointUrl = endpointUrl,
                         model = model.trim(),
@@ -218,14 +222,13 @@ class OpenAiCompatAnalyzer {
                         userPrompt = userPrompt,
                         forceJsonMode = false
                     )
-                    executeChat(providerName, endpointUrl, cleanKey, fallbackPayload, extraHeaders)
+                    val reply2 = executeChat(providerName, endpointUrl, cleanKey, fallbackPayload, extraHeaders)
+                    val pureJson2 = RacePromptBuilder.extractPureJson(reply2)
+                    json.decodeFromString<PredictionReport>(pureJson2)
                 } else {
                     throw e
                 }
             }
-
-            val pureJson = RacePromptBuilder.extractPureJson(rawReply)
-            json.decodeFromString<PredictionReport>(pureJson)
         }
     }
 
@@ -241,7 +244,7 @@ class OpenAiCompatAnalyzer {
         return buildJsonObject {
             put("model", model)
             put("temperature", 0.3)
-            put("max_tokens", if (isGroq) 3200 else 4096)
+            put("max_tokens", if (isGroq) 3200 else 6000)
             if (isGroqGptOss) {
                 put("reasoning_effort", "low")
             }
@@ -288,7 +291,7 @@ class OpenAiCompatAnalyzer {
                     json.parseToJsonElement(bodyString)
                         .jsonObject["error"]
                         ?.jsonObject?.get("message")
-                        ?.jsonPrimitive?.content
+                        ?.jsonPrimitive?.contentOrNull
                 }.getOrNull()
 
                 val friendly = when (response.code) {
@@ -308,11 +311,11 @@ class OpenAiCompatAnalyzer {
                 ?: error("ساختار پیام $providerName خالی بود.")
 
             val content = runCatching {
-                message["content"]?.jsonPrimitive?.content
+                message["content"]?.jsonPrimitive?.contentOrNull
             }.getOrNull().orEmpty().trim()
 
             if (content.isBlank()) {
-                error("متن خروجی $providerName خالی بود (احتمالاً مدل تمام سقف توکن را صرف تفکر کرده؛ مدل qwen/qwen3.8-27b را امتحان کنید).")
+                error("متن خروجی $providerName خالی بود (مدل استدلالی تمام توکن را صرف تفکر کرد یا پاسخ null برگرداند).")
             }
             return content
         }
