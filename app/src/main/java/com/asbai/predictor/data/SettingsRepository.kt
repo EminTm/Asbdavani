@@ -3,6 +3,7 @@ package com.asbai.predictor.data
 import android.content.Context
 import com.asbai.predictor.model.RiskProfile
 import com.asbai.predictor.model.SavedPrediction
+import com.asbai.predictor.model.ThirdProvider
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
@@ -38,15 +39,29 @@ class SettingsRepository(context: Context) {
         prefs.edit().putString(KEY_GROQ_MODEL, model.trim().ifEmpty { DEFAULT_GROQ_MODEL }).apply()
     }
 
-    fun getOpenRouterApiKey(): String = prefs.getString(KEY_OR_API_KEY, "")?.trim().orEmpty()
-    fun saveOpenRouterApiKey(apiKey: String) {
-        prefs.edit().putString(KEY_OR_API_KEY, apiKey.trim()).apply()
+    fun getThirdProvider(): ThirdProvider {
+        val name = prefs.getString(KEY_THIRD_PROVIDER, ThirdProvider.COHERE.name)
+        return runCatching { ThirdProvider.valueOf(name ?: ThirdProvider.COHERE.name) }
+            .getOrDefault(ThirdProvider.COHERE)
     }
 
-    fun getOpenRouterModel(): String = prefs.getString(KEY_OR_MODEL, DEFAULT_OR_MODEL)?.trim().orEmpty()
-        .ifEmpty { DEFAULT_OR_MODEL }
-    fun saveOpenRouterModel(model: String) {
-        prefs.edit().putString(KEY_OR_MODEL, model.trim().ifEmpty { DEFAULT_OR_MODEL }).apply()
+    fun saveThirdProvider(provider: ThirdProvider) {
+        prefs.edit().putString(KEY_THIRD_PROVIDER, provider.name).apply()
+    }
+
+    fun getThirdApiKey(): String = prefs.getString(KEY_THIRD_API_KEY, "")?.trim().orEmpty()
+    fun saveThirdApiKey(apiKey: String) {
+        prefs.edit().putString(KEY_THIRD_API_KEY, apiKey.trim()).apply()
+    }
+
+    fun getThirdModel(): String {
+        val fallback = getThirdProvider().defaultModel
+        return prefs.getString(KEY_THIRD_MODEL, fallback)?.trim().orEmpty().ifEmpty { fallback }
+    }
+
+    fun saveThirdModel(model: String) {
+        val fallback = getThirdProvider().defaultModel
+        prefs.edit().putString(KEY_THIRD_MODEL, model.trim().ifEmpty { fallback }).apply()
     }
 
     fun getRiskProfile(): RiskProfile {
@@ -76,16 +91,16 @@ class SettingsRepository(context: Context) {
     }
 
     companion object {
-        const val DEFAULT_MODEL = "gemini-3.5-flash-lite"
-        const val DEFAULT_GROQ_MODEL = "openai/gpt-oss-120b"
-        const val DEFAULT_OR_MODEL = "openrouter/free"
+        const val DEFAULT_MODEL = "gemini-4-hydrogen"
+        const val DEFAULT_GROQ_MODEL = "qwen/qwen3.8-27b"
 
         private const val KEY_API_KEY = "gemini_api_key"
         private const val KEY_MODEL = "gemini_model"
         private const val KEY_GROQ_API_KEY = "groq_api_key"
         private const val KEY_GROQ_MODEL = "groq_model"
-        private const val KEY_OR_API_KEY = "openrouter_api_key"
-        private const val KEY_OR_MODEL = "openrouter_model"
+        private const val KEY_THIRD_PROVIDER = "third_provider"
+        private const val KEY_THIRD_API_KEY = "third_api_key"
+        private const val KEY_THIRD_MODEL = "third_model"
         private const val KEY_RISK_PROFILE = "risk_profile"
         private const val KEY_HISTORY = "prediction_history"
     }
