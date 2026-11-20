@@ -34,6 +34,37 @@ enum class RiskProfile(val label: String, val instruction: String) {
 }
 
 @Serializable
+enum class ThirdProvider(
+    val shortName: String,
+    val title: String,
+    val endpointUrl: String,
+    val defaultModel: String,
+    val helperText: String
+) {
+    COHERE(
+        shortName = "Cohere",
+        title = "Cohere (پایدار - ۱۰۰۰ تحلیل ماهانه)",
+        endpointUrl = "https://api.cohere.ai/compatibility/v1/chat/completions",
+        defaultModel = "command-a-plus-05-2026",
+        helperText = "کلید رایگان از dashboard.cohere.com/api-keys (بدون کارت بانکی)"
+    ),
+    ZAI(
+        shortName = "Z.ai",
+        title = "Z.ai / GLM (رایگان دائمی)",
+        endpointUrl = "https://api.z.ai/api/paas/v4/chat/completions",
+        defaultModel = "glm-4.7-flash",
+        helperText = "کلید رایگان از z.ai (مدل‌های glm-4.7-flash و glm-4.5-flash رایگان)"
+    ),
+    OPENROUTER(
+        shortName = "OpenRouter",
+        title = "OpenRouter",
+        endpointUrl = "https://openrouter.ai/api/v1/chat/completions",
+        defaultModel = "nvidia/nemotron-3.5-super-vl:free",
+        helperText = "کلید رایگان از openrouter.ai/keys"
+    )
+}
+
+@Serializable
 data class AnomalySignal(
     val title: String = "",
     val severity: String = "نکته",
