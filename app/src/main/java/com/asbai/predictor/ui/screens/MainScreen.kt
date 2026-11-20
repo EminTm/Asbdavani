@@ -81,6 +81,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.asbai.predictor.model.RiskProfile
+import com.asbai.predictor.model.ThirdProvider
 import com.asbai.predictor.ui.components.PredictionResultView
 import com.asbai.predictor.util.AppUpdateInfo
 import com.asbai.predictor.util.PdfExporter
@@ -281,7 +282,7 @@ private fun PredictTab(state: MainUiState, viewModel: MainViewModel) {
     var showRawData by remember { mutableStateOf(true) }
     var showNewsNotes by remember { mutableStateOf(false) }
 
-    val hasAnyKey = state.apiKey.isNotBlank() || state.groqApiKey.isNotBlank() || state.openRouterApiKey.isNotBlank()
+    val hasAnyKey = state.apiKey.isNotBlank() || state.groqApiKey.isNotBlank() || state.thirdApiKey.isNotBlank()
 
     Column(
         modifier = Modifier
@@ -309,7 +310,7 @@ private fun PredictTab(state: MainUiState, viewModel: MainViewModel) {
                 ) {
                     CouncilMemberBadge("Gemini", state.apiKey.isNotBlank())
                     CouncilMemberBadge("Groq", state.groqApiKey.isNotBlank())
-                    CouncilMemberBadge("OpenRouter", state.openRouterApiKey.isNotBlank())
+                    CouncilMemberBadge(state.thirdProvider.shortName, state.thirdApiKey.isNotBlank())
                 }
                 TextButton(onClick = { viewModel.selectTab(AppTab.SETTINGS) }) {
                     Text(if (hasAnyKey) "تنظیم کلیدها" else "ثبت کلید")
@@ -771,10 +772,27 @@ private fun SettingsTab(state: MainUiState, viewModel: MainViewModel) {
     var groqKeyInput by remember(state.groqApiKey) { mutableStateOf(state.groqApiKey) }
     var groqModelInput by remember(state.groqModel) { mutableStateOf(state.groqModel) }
 
-    var orKeyInput by remember(state.openRouterApiKey) { mutableStateOf(state.openRouterApiKey) }
-    var orModelInput by remember(state.openRouterModel) { mutableStateOf(state.openRouterModel) }
+    var selectedThirdProvider by remember(state.thirdProvider) { mutableStateOf(state.thirdProvider) }
+    var thirdKeyInput by remember(state.thirdApiKey) { mutableStateOf(state.thirdApiKey) }
+    var thirdModelInput by remember(state.thirdModel) { mutableStateOf(state.thirdModel) }
 
     var selectedRisk by remember(state.riskProfile) { mutableStateOf(state.riskProfile) }
+
+    val thirdPresets = when (selectedThirdProvider) {
+        ThirdProvider.COHERE -> listOf(
+            "command-a-plus-05-2026" to "قوی‌ترین مدل کوهیر (پیشنهادی)",
+            "command-a-03-2025" to "چندزبانه ۱۱۱B پایدار"
+        )
+        ThirdProvider.ZAI -> listOf(
+            "glm-4.7-flash" to "رایگان دائمی (پیشنهادی)",
+            "glm-4.5-flash" to "سریع و سبک"
+        )
+        ThirdProvider.OPENROUTER -> listOf(
+            "nvidia/nemotron-3-ultra-550b-a55b:free" to "۵۵۰B انویدیا",
+            "nvidia/nemotron-3.5-super-vl:free" to "پایدار انویدیا",
+            "openrouter/free" to "روتر خودکار"
+        )
+    }
 
     Column(
         modifier = Modifier
@@ -783,7 +801,6 @@ private fun SettingsTab(state: MainUiState, viewModel: MainViewModel) {
             .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        // کارت بررسی و نصب آپدیت خودکار
         ElevatedCard(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(14.dp)) {
                 Row(
@@ -840,9 +857,9 @@ private fun SettingsTab(state: MainUiState, viewModel: MainViewModel) {
             model = geminiModelInput,
             onModelChange = { geminiModelInput = it },
             presetModels = listOf(
-                "gemini-3.5-flash-lite" to "سریع و سبک",
-                "gemini-3.7-flash" to "متعادل",
-                "gemini-3.8-flash" to "دقیق‌تر"
+                "gemini-4-hydrogen" to "جدیدترین و قوی‌ترین رایگان",
+                "gemini-3.8-flash" to "پایدار نسل ۳",
+                "gemini-3.5-flash-lite" to "سریع و سبک"
             ),
             isTesting = state.isTestingKey,
             onTestClick = { viewModel.testGeminiKey(geminiKeyInput, geminiModelInput) }
@@ -857,8 +874,8 @@ private fun SettingsTab(state: MainUiState, viewModel: MainViewModel) {
             model = groqModelInput,
             onModelChange = { groqModelInput = it },
             presetModels = listOf(
-                "openai/gpt-oss-120b" to "قدرتمند ۱۲۰B",
                 "qwen/qwen3.8-27b" to "عالی در فارسی و JSON",
+                "openai/gpt-oss-120b" to "قدرتمند ۱۲۰B",
                 "openai/gpt-oss-20b" to "سریع ۲۰B"
             ),
             isTesting = state.isTestingKey,
@@ -866,19 +883,38 @@ private fun SettingsTab(state: MainUiState, viewModel: MainViewModel) {
         )
 
         ProviderSettingsCard(
-            title = "۳. OpenRouter (رایگان، ۵۰ تحلیل روزانه)",
-            helperText = "کلید رایگان از openrouter.ai/keys (شروع با sk-or-v1-)",
-            keyLabel = "OpenRouter API Key",
-            apiKey = orKeyInput,
-            onApiKeyChange = { orKeyInput = it },
-            model = orModelInput,
-            onModelChange = { orModelInput = it },
-            presetModels = listOf(
-                "nvidia/nemotron-3.5-super-vl:free" to "مدل قدرتمند انویدیا (پیشنهادی)",
-                "openrouter/free" to "انتخاب خودکار رایگان"
-            ),
+            title = "۳. عضو سوم شورا (${selectedThirdProvider.shortName})",
+            helperText = selectedThirdProvider.helperText,
+            keyLabel = "${selectedThirdProvider.shortName} API Key",
+            apiKey = thirdKeyInput,
+            onApiKeyChange = { thirdKeyInput = it },
+            model = thirdModelInput,
+            onModelChange = { thirdModelInput = it },
+            presetModels = thirdPresets,
             isTesting = state.isTestingKey,
-            onTestClick = { viewModel.testOpenRouterKey(orKeyInput, orModelInput) }
+            onTestClick = {
+                viewModel.testThirdKey(selectedThirdProvider, thirdKeyInput, thirdModelInput)
+            },
+            topSlot = {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    ThirdProvider.entries.forEach { provider ->
+                        FilterChip(
+                            selected = selectedThirdProvider == provider,
+                            onClick = {
+                                selectedThirdProvider = provider
+                                thirdModelInput = provider.defaultModel
+                            },
+                            label = { Text(provider.title) }
+                        )
+                    }
+                }
+                Spacer(Modifier.height(6.dp))
+            }
         )
 
         ElevatedCard(modifier = Modifier.fillMaxWidth()) {
@@ -915,8 +951,9 @@ private fun SettingsTab(state: MainUiState, viewModel: MainViewModel) {
                     geminiModel = geminiModelInput,
                     groqKey = groqKeyInput,
                     groqModel = groqModelInput,
-                    openRouterKey = orKeyInput,
-                    openRouterModel = orModelInput,
+                    thirdProvider = selectedThirdProvider,
+                    thirdKey = thirdKeyInput,
+                    thirdModel = thirdModelInput,
                     riskProfile = selectedRisk
                 )
             },
@@ -940,7 +977,8 @@ private fun ProviderSettingsCard(
     onModelChange: (String) -> Unit,
     presetModels: List<Pair<String, String>>,
     isTesting: Boolean,
-    onTestClick: () -> Unit
+    onTestClick: () -> Unit,
+    topSlot: @Composable () -> Unit = {}
 ) {
     var showKey by remember { mutableStateOf(false) }
 
@@ -955,7 +993,8 @@ private fun ProviderSettingsCard(
                     fontWeight = FontWeight.Bold
                 )
             }
-            Spacer(Modifier.height(4.dp))
+            Spacer(Modifier.height(6.dp))
+            topSlot()
             Text(
                 text = helperText,
                 style = MaterialTheme.typography.bodySmall,
