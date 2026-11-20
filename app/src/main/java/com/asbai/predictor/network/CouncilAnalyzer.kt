@@ -6,6 +6,7 @@ import com.asbai.predictor.model.DarkHorsePick
 import com.asbai.predictor.model.HorseAnalysis
 import com.asbai.predictor.model.PredictionReport
 import com.asbai.predictor.model.RiskProfile
+import com.asbai.predictor.model.ThirdProvider
 import com.asbai.predictor.model.TopPick
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -16,8 +17,9 @@ data class CouncilConfig(
     val geminiModel: String,
     val groqKey: String,
     val groqModel: String,
-    val openRouterKey: String,
-    val openRouterModel: String
+    val thirdProvider: ThirdProvider,
+    val thirdKey: String,
+    val thirdModel: String
 )
 
 data class CouncilOutput(
@@ -47,10 +49,10 @@ class CouncilAnalyzer(
     ): Result<CouncilOutput> = runCatching {
         val hasGemini = config.geminiKey.isNotBlank()
         val hasGroq = config.groqKey.isNotBlank()
-        val hasOpenRouter = config.openRouterKey.isNotBlank()
+        val hasThird = config.thirdKey.isNotBlank()
 
-        if (!hasGemini && !hasGroq && !hasOpenRouter) {
-            error("حداقل یک کلید هوش مصنوعی (Gemini، Groq یا OpenRouter) را در تب تنظیمات وارد کنید.")
+        if (!hasGemini && !hasGroq && !hasThird) {
+            error("حداقل یک کلید هوش مصنوعی (Gemini، Groq یا Cohere/Z.ai) را در تب تنظیمات وارد کنید.")
         }
 
         val liveNewsPair = if (hasGemini && useWebSearch) {
@@ -98,7 +100,7 @@ class CouncilAnalyzer(
                             rawRaceData = rawRaceData,
                             userNewsNotes = userNewsNotes,
                             liveNewsContext = liveNewsPair.first,
-                            maxDataChars = 11000
+                            maxDataChars = 7000
                         )
                         MemberResult(
                             providerName = "Groq",
@@ -108,27 +110,29 @@ class CouncilAnalyzer(
                         )
                     })
                 }
-                if (hasOpenRouter) {
+                if (hasThird) {
                     add(async {
+                        val headers = if (config.thirdProvider == ThirdProvider.OPENROUTER) {
+                            mapOf("HTTP-Referer" to "https://asbdavani.app", "X-Title" to "AsbDavaniAI")
+                        } else {
+                            emptyMap()
+                        }
                         val res = openAiCompatAnalyzer.analyzeRace(
-                            providerName = "OpenRouter",
-                            endpointUrl = OPENROUTER_ENDPOINT,
-                            apiKey = config.openRouterKey,
-                            model = config.openRouterModel,
+                            providerName = config.thirdProvider.shortName,
+                            endpointUrl = config.thirdProvider.endpointUrl,
+                            apiKey = config.thirdKey,
+                            model = config.thirdModel,
                             riskProfile = riskProfile,
                             raceTitle = raceTitle,
                             rawRaceData = rawRaceData,
                             userNewsNotes = userNewsNotes,
                             liveNewsContext = liveNewsPair.first,
-                            extraHeaders = mapOf(
-                                "HTTP-Referer" to "https://asbdavani.app",
-                                "X-Title" to "AsbDavaniAI"
-                            ),
-                            maxDataChars = 13000
+                            extraHeaders = headers,
+                            maxDataChars = 15000
                         )
                         MemberResult(
-                            providerName = "OpenRouter",
-                            modelName = config.openRouterModel,
+                            providerName = config.thirdProvider.shortName,
+                            modelName = config.thirdModel,
                             report = res.getOrNull(),
                             error = res.exceptionOrNull()?.message
                         )
@@ -177,7 +181,7 @@ class CouncilAnalyzer(
         if (successful.size == 1) {
             val single = successful.first().second
             return single.copy(
-                consensusSummary = "تحلیل تک‌مدل (${successful.first().first.providerName}) — برای مقایسه چندمدلی، کلید Groq یا OpenRouter را هم اضافه کنید.",
+                consensusSummary = "تحلیل تک‌مدل (${successful.first().first.providerName}) — برای مقایسه چندمدلی، کلید Groq یا Cohere/Z.ai را هم اضافه کنید.",
                 memberOpinions = opinions,
                 searchSources = if (single.searchSources.isNotEmpty()) single.searchSources else searchSources
             )
@@ -379,6 +383,5 @@ class CouncilAnalyzer(
 
     companion object {
         const val GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions"
-        const val OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
     }
 }
