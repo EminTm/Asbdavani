@@ -8,6 +8,7 @@ import com.asbai.predictor.model.DiscoveredLink
 import com.asbai.predictor.model.PredictionReport
 import com.asbai.predictor.model.RiskProfile
 import com.asbai.predictor.model.SavedPrediction
+import com.asbai.predictor.model.ThirdProvider
 import com.asbai.predictor.network.AsbdavaniScraper
 import com.asbai.predictor.network.CouncilAnalyzer
 import com.asbai.predictor.network.CouncilConfig
@@ -50,8 +51,9 @@ data class MainUiState(
     val selectedModel: String = SettingsRepository.DEFAULT_MODEL,
     val groqApiKey: String = "",
     val groqModel: String = SettingsRepository.DEFAULT_GROQ_MODEL,
-    val openRouterApiKey: String = "",
-    val openRouterModel: String = SettingsRepository.DEFAULT_OR_MODEL,
+    val thirdProvider: ThirdProvider = ThirdProvider.COHERE,
+    val thirdApiKey: String = "",
+    val thirdModel: String = ThirdProvider.COHERE.defaultModel,
     val riskProfile: RiskProfile = RiskProfile.BALANCED,
     val currentVersionName: String = "1.0",
     val availableUpdate: AppUpdateInfo? = null,
@@ -77,8 +79,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             selectedModel = repo.getModel(),
             groqApiKey = repo.getGroqApiKey(),
             groqModel = repo.getGroqModel(),
-            openRouterApiKey = repo.getOpenRouterApiKey(),
-            openRouterModel = repo.getOpenRouterModel(),
+            thirdProvider = repo.getThirdProvider(),
+            thirdApiKey = repo.getThirdApiKey(),
+            thirdModel = repo.getThirdModel(),
             riskProfile = repo.getRiskProfile(),
             history = repo.getHistory(),
             currentVersionName = AppUpdater.getCurrentVersionName(appContext)
@@ -259,7 +262,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
         val state = _uiState.value
-        val hasAnyKey = state.apiKey.isNotBlank() || state.groqApiKey.isNotBlank() || state.openRouterApiKey.isNotBlank()
+        val hasAnyKey = state.apiKey.isNotBlank() || state.groqApiKey.isNotBlank() || state.thirdApiKey.isNotBlank()
         if (hasAnyKey && extractedText.isNotBlank()) {
             analyzeCurrentRace()
         } else if (!hasAnyKey) {
@@ -274,7 +277,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val activeMembers = buildList {
             if (state.apiKey.isNotBlank()) add("Gemini")
             if (state.groqApiKey.isNotBlank()) add("Groq")
-            if (state.openRouterApiKey.isNotBlank()) add("OpenRouter")
+            if (state.thirdApiKey.isNotBlank()) add(state.thirdProvider.shortName)
         }
 
         if (activeMembers.isEmpty()) {
@@ -307,8 +310,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 geminiModel = state.selectedModel,
                 groqKey = state.groqApiKey,
                 groqModel = state.groqModel,
-                openRouterKey = state.openRouterApiKey,
-                openRouterModel = state.openRouterModel
+                thirdProvider = state.thirdProvider,
+                thirdKey = state.thirdApiKey,
+                thirdModel = state.thirdModel
             )
 
             councilAnalyzer.analyzeWithCouncil(
@@ -360,16 +364,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         geminiModel: String,
         groqKey: String,
         groqModel: String,
-        openRouterKey: String,
-        openRouterModel: String,
+        thirdProvider: ThirdProvider,
+        thirdKey: String,
+        thirdModel: String,
         riskProfile: RiskProfile
     ) {
         repo.saveApiKey(geminiKey)
         repo.saveModel(geminiModel)
         repo.saveGroqApiKey(groqKey)
         repo.saveGroqModel(groqModel)
-        repo.saveOpenRouterApiKey(openRouterKey)
-        repo.saveOpenRouterModel(openRouterModel)
+        repo.saveThirdProvider(thirdProvider)
+        repo.saveThirdApiKey(thirdKey)
+        repo.saveThirdModel(thirdModel)
         repo.saveRiskProfile(riskProfile)
 
         _uiState.update {
@@ -378,8 +384,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 selectedModel = repo.getModel(),
                 groqApiKey = repo.getGroqApiKey(),
                 groqModel = repo.getGroqModel(),
-                openRouterApiKey = repo.getOpenRouterApiKey(),
-                openRouterModel = repo.getOpenRouterModel(),
+                thirdProvider = repo.getThirdProvider(),
+                thirdApiKey = repo.getThirdApiKey(),
+                thirdModel = repo.getThirdModel(),
                 riskProfile = repo.getRiskProfile(),
                 statusMessage = "تنظیمات شورای هوش مصنوعی ذخیره شد.",
                 errorMessage = null
@@ -436,28 +443,40 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun testOpenRouterKey(apiKey: String, model: String) {
+    fun testThirdKey(provider: ThirdProvider, apiKey: String, model: String) {
         viewModelScope.launch {
             _uiState.update {
-                it.copy(isTestingKey = true, errorMessage = null, statusMessage = "در حال تست OpenRouter...")
+                it.copy(isTestingKey = true, errorMessage = null, statusMessage = "در حال تست ${provider.shortName}...")
+            }
+            val headers = if (provider == ThirdProvider.OPENROUTER) {
+                mapOf("HTTP-Referer" to "https://asbdavani.app", "X-Title" to "AsbDavaniAI")
+            } else {
+                emptyMap()
             }
             openAiCompatAnalyzer.testConnection(
-                providerName = "OpenRouter",
-                endpointUrl = CouncilAnalyzer.OPENROUTER_ENDPOINT,
+                providerName = provider.shortName,
+                endpointUrl = provider.endpointUrl,
                 apiKey = apiKey,
                 model = model,
-                extraHeaders = mapOf("HTTP-Referer" to "https://asbdavani.app", "X-Title" to "AsbDavaniAI")
+                extraHeaders = headers
             ).fold(
                 onSuccess = { msg ->
-                    repo.saveOpenRouterApiKey(apiKey)
-                    repo.saveOpenRouterModel(model)
+                    repo.saveThirdProvider(provider)
+                    repo.saveThirdApiKey(apiKey)
+                    repo.saveThirdModel(model)
                     _uiState.update {
-                        it.copy(isTestingKey = false, openRouterApiKey = repo.getOpenRouterApiKey(), openRouterModel = repo.getOpenRouterModel(), statusMessage = msg)
+                        it.copy(
+                            isTestingKey = false,
+                            thirdProvider = repo.getThirdProvider(),
+                            thirdApiKey = repo.getThirdApiKey(),
+                            thirdModel = repo.getThirdModel(),
+                            statusMessage = msg
+                        )
                     }
                 },
                 onFailure = { err ->
                     _uiState.update {
-                        it.copy(isTestingKey = false, errorMessage = err.message ?: "تست OpenRouter ناموفق بود.", statusMessage = null)
+                        it.copy(isTestingKey = false, errorMessage = err.message ?: "تست ${provider.shortName} ناموفق بود.", statusMessage = null)
                     }
                 }
             )
