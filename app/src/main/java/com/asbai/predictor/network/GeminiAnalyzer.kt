@@ -4,10 +4,13 @@ import com.asbai.predictor.model.PredictionReport
 import com.asbai.predictor.model.RiskProfile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObjectBuilder
 import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -15,18 +18,12 @@ import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
 import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import java.util.concurrent.TimeUnit
 
 class GeminiAnalyzer {
 
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(20, TimeUnit.SECONDS)
-        .writeTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(90, TimeUnit.SECONDS)
-        .build()
+    private val client = HttpClientProvider.sharedClient
 
     private val json = Json {
         ignoreUnknownKeys = true
@@ -34,10 +31,25 @@ class GeminiAnalyzer {
         encodeDefaults = true
     }
 
+    private fun supportsThinkingLevel(cleanModel: String): Boolean {
+        return cleanModel.startsWith("gemini-4") ||
+            cleanModel.startsWith("gemini-3.7") ||
+            cleanModel.startsWith("gemini-3.8")
+    }
+
+    private fun JsonObjectBuilder.applyFastThinkingIfNeeded(cleanModel: String) {
+        if (supportsThinkingLevel(cleanModel)) {
+            putJsonObject("thinkingConfig") {
+                put("thinkingLevel", "LOW")
+            }
+        }
+    }
+
     suspend fun testConnection(apiKey: String, model: String): Result<String> =
         withContext(Dispatchers.IO) {
             runCatching {
                 val cleanKey = apiKey.trim()
+                val cleanModel = model.trim().removePrefix("models/")
                 if (cleanKey.isBlank()) error("لطفاً ابتدا کلید API جمنای را وارد کنید.")
                 val payload = buildJsonObject {
                     putJsonArray("contents") {
@@ -51,11 +63,12 @@ class GeminiAnalyzer {
                         }
                     }
                     putJsonObject("generationConfig") {
-                        put("maxOutputTokens", 32)
+                        put("maxOutputTokens", 512)
+                        applyFastThinkingIfNeeded(cleanModel)
                     }
                 }
-                val text = executeGenerateContent(cleanKey, model, payload.toString()).first
-                "اتصال Gemini با مدل $model برقرار شد (${text.trim().take(20)})"
+                val text = executeGenerateContent(cleanKey, cleanModel, payload.toString()).first
+                "اتصال Gemini با مدل $cleanModel برقرار شد (${text.trim().take(20)})"
             }
         }
 
@@ -66,9 +79,11 @@ class GeminiAnalyzer {
         rawRaceData: String
     ): Pair<String, List<String>> = withContext(Dispatchers.IO) {
         if (apiKey.isBlank()) return@withContext "" to emptyList()
-        runCatching {
-            fetchLiveNewsContext(apiKey.trim(), model, raceTitle, rawRaceData)
-        }.getOrDefault("" to emptyList())
+        withTimeoutOrNull(12_000L) {
+            runCatching {
+                fetchLiveNewsContext(apiKey.trim(), model, raceTitle, rawRaceData)
+            }.getOrDefault("" to emptyList())
+        } ?: ("" to emptyList())
     }
 
     suspend fun analyzeRace(
@@ -83,20 +98,19 @@ class GeminiAnalyzer {
     ): Result<PredictionReport> = withContext(Dispatchers.IO) {
         runCatching {
             val cleanKey = apiKey.trim()
-            if (cleanKey.isBlank()) {
-                error("کلید Gemini ثبت نشده است.")
-            }
-            if (rawRaceData.isBlank()) {
-                error("داده‌ای برای تحلیل وجود ندارد.")
-            }
+            val cleanModel = model.trim().removePrefix("models/")
+            if (cleanKey.isBlank()) error("کلید Gemini ثبت نشده است.")
+            if (rawRaceData.isBlank()) error("داده‌ای برای تحلیل وجود ندارد.")
 
             var liveNewsContext = preFetchedNews?.first.orEmpty()
             var discoveredSources = preFetchedNews?.second.orEmpty()
 
             if (preFetchedNews == null && useWebSearch) {
-                val searchRes = runCatching {
-                    fetchLiveNewsContext(cleanKey, model, raceTitle, rawRaceData)
-                }.getOrNull()
+                val searchRes = withTimeoutOrNull(12_000L) {
+                    runCatching {
+                        fetchLiveNewsContext(cleanKey, cleanModel, raceTitle, rawRaceData)
+                    }.getOrNull()
+                }
                 if (searchRes != null) {
                     liveNewsContext = searchRes.first
                     discoveredSources = searchRes.second
@@ -109,7 +123,7 @@ class GeminiAnalyzer {
                 rawRaceData = rawRaceData,
                 userNewsNotes = userNewsNotes,
                 liveNewsContext = liveNewsContext,
-                maxDataChars = 20000
+                maxDataChars = 22000
             )
 
             val payload = buildJsonObject {
@@ -128,11 +142,12 @@ class GeminiAnalyzer {
                 }
                 putJsonObject("generationConfig") {
                     put("responseMimeType", "application/json")
-                    put("maxOutputTokens", 8192)
+                    put("maxOutputTokens", 16384)
+                    applyFastThinkingIfNeeded(cleanModel)
                 }
             }
 
-            val (rawResponse, _) = executeGenerateContent(cleanKey, model, payload.toString())
+            val (rawResponse, _) = executeGenerateContent(cleanKey, cleanModel, payload.toString())
             val cleanedJson = RacePromptBuilder.extractPureJson(rawResponse)
             val parsed = json.decodeFromString<PredictionReport>(cleanedJson)
             parsed.copy(searchSources = discoveredSources)
@@ -145,12 +160,12 @@ class GeminiAnalyzer {
         raceTitle: String,
         rawRaceData: String
     ): Pair<String, List<String>> {
+        val cleanModel = model.trim().removePrefix("models/")
         val searchPrompt = """
-            با استفاده از جستجوی گوگل، درباره مسابقات اسبدوانی ایران مرتبط با اطلاعات زیر جستجو کن (سایت asbdavani.app، وضعیت پیست گنبد/آق‌قلا/بندرترکمن، اخبار اخیر اسب‌ها یا چابکسواران و مصدومیت‌ها یا انصراف‌های احتمالی).
-            خلاصه‌ای کوتاه، دقیق و واقعی فقط از اطلاعات تاییدشده بده.
+            با جستجوی گوگل، اخبار مرتبط با مسابقه اسبدوانی زیر را پیدا کن (ایران asbdavani.app، ترکیه TJK، یا مسابقات بین‌المللی، وضعیت پیست، تغییر چابکسوار یا مصدومیت).
+            خلاصه کوتاه و واقعی بده.
             عنوان: $raceTitle
-            بخشی از داده‌های دور:
-            ${rawRaceData.take(1800)}
+            داده: ${rawRaceData.take(1500)}
         """.trimIndent()
 
         val payload = buildJsonObject {
@@ -168,18 +183,18 @@ class GeminiAnalyzer {
                 }
             }
             putJsonObject("generationConfig") {
-                put("maxOutputTokens", 1500)
+                put("maxOutputTokens", 1200)
+                applyFastThinkingIfNeeded(cleanModel)
             }
         }
-        return executeGenerateContent(apiKey, model, payload.toString())
+        return executeGenerateContent(apiKey, cleanModel, payload.toString())
     }
 
     private fun executeGenerateContent(
         apiKey: String,
-        model: String,
+        cleanModel: String,
         jsonBody: String
     ): Pair<String, List<String>> {
-        val cleanModel = model.trim().removePrefix("models/")
         val url = "https://generativelanguage.googleapis.com/v1beta/models/$cleanModel:generateContent"
 
         val request = Request.Builder()
@@ -196,7 +211,7 @@ class GeminiAnalyzer {
                     json.parseToJsonElement(bodyString)
                         .jsonObject["error"]
                         ?.jsonObject?.get("message")
-                        ?.jsonPrimitive?.content
+                        ?.jsonPrimitive?.contentOrNull
                 }.getOrNull()
 
                 val translated = translateApiError(apiMsg)
@@ -221,7 +236,7 @@ class GeminiAnalyzer {
             val textParts = parts.mapNotNull { partEl ->
                 val obj = partEl.jsonObject
                 val isThought = obj["thought"]?.jsonPrimitive?.booleanOrNull == true
-                if (isThought) null else obj["text"]?.jsonPrimitive?.content
+                if (isThought) null else obj["text"]?.jsonPrimitive?.contentOrNull
             }
 
             val sources = candidate["groundingMetadata"]
@@ -229,8 +244,8 @@ class GeminiAnalyzer {
                 ?.jsonArray
                 ?.mapNotNull { chunk ->
                     val web = chunk.jsonObject["web"]?.jsonObject
-                    val title = web?.get("title")?.jsonPrimitive?.content
-                    val uri = web?.get("uri")?.jsonPrimitive?.content
+                    val title = web?.get("title")?.jsonPrimitive?.contentOrNull
+                    val uri = web?.get("uri")?.jsonPrimitive?.contentOrNull
                     if (!uri.isNullOrBlank()) {
                         if (!title.isNullOrBlank()) "$title ($uri)" else uri
                     } else null
