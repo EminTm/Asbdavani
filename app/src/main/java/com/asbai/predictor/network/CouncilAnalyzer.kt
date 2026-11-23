@@ -13,13 +13,20 @@ import kotlinx.coroutines.coroutineScope
 import kotlin.math.roundToInt
 
 data class CouncilConfig(
+    val geminiEnabled: Boolean = true,
     val geminiKey: String,
     val geminiModel: String,
+    val groqEnabled: Boolean = true,
     val groqKey: String,
     val groqModel: String,
+    val thirdEnabled: Boolean = true,
     val thirdProvider: ThirdProvider,
     val thirdKey: String,
-    val thirdModel: String
+    val thirdModel: String,
+    val cfEnabled: Boolean = true,
+    val cfAccountId: String = "",
+    val cfApiToken: String = "",
+    val cfModel: String = "@cf/deepseek-ai/deepseek-v4.1-flash-1017"
 )
 
 data class CouncilOutput(
@@ -47,15 +54,16 @@ class CouncilAnalyzer(
         userNewsNotes: String,
         useWebSearch: Boolean
     ): Result<CouncilOutput> = runCatching {
-        val hasGemini = config.geminiKey.isNotBlank()
-        val hasGroq = config.groqKey.isNotBlank()
-        val hasThird = config.thirdKey.isNotBlank()
+        val useGemini = config.geminiEnabled && config.geminiKey.isNotBlank()
+        val useGroq = config.groqEnabled && config.groqKey.isNotBlank()
+        val useThird = config.thirdEnabled && config.thirdKey.isNotBlank()
+        val useCf = config.cfEnabled && config.cfAccountId.isNotBlank() && config.cfApiToken.isNotBlank()
 
-        if (!hasGemini && !hasGroq && !hasThird) {
-            error("حداقل یک کلید هوش مصنوعی (Gemini، Groq یا Cohere/Z.ai) را در تب تنظیمات وارد کنید.")
+        if (!useGemini && !useGroq && !useThird && !useCf) {
+            error("هیچ هوش مصنوعی‌ای روشن نیست! حداقل یک مدل را روشن کنید و کلیدش را در تنظیمات وارد نمایید.")
         }
 
-        val liveNewsPair = if (hasGemini && useWebSearch) {
+        val liveNewsPair = if (useGemini && useWebSearch) {
             geminiAnalyzer.fetchLiveNewsOnly(
                 apiKey = config.geminiKey,
                 model = config.geminiModel,
@@ -68,7 +76,7 @@ class CouncilAnalyzer(
 
         val memberResults = coroutineScope {
             val jobs = buildList {
-                if (hasGemini) {
+                if (useGemini) {
                     add(async {
                         val res = geminiAnalyzer.analyzeRace(
                             apiKey = config.geminiKey,
@@ -88,7 +96,7 @@ class CouncilAnalyzer(
                         )
                     })
                 }
-                if (hasGroq) {
+                if (useGroq) {
                     add(async {
                         val res = openAiCompatAnalyzer.analyzeRace(
                             providerName = "Groq",
@@ -110,7 +118,7 @@ class CouncilAnalyzer(
                         )
                     })
                 }
-                if (hasThird) {
+                if (useThird) {
                     add(async {
                         val headers = if (config.thirdProvider == ThirdProvider.OPENROUTER) {
                             mapOf("HTTP-Referer" to "https://asbdavani.app", "X-Title" to "AsbDavaniAI")
@@ -138,6 +146,28 @@ class CouncilAnalyzer(
                         )
                     })
                 }
+                if (useCf) {
+                    add(async {
+                        val res = openAiCompatAnalyzer.analyzeRace(
+                            providerName = "Cloudflare",
+                            endpointUrl = cloudflareEndpoint(config.cfAccountId),
+                            apiKey = config.cfApiToken,
+                            model = config.cfModel,
+                            riskProfile = riskProfile,
+                            raceTitle = raceTitle,
+                            rawRaceData = rawRaceData,
+                            userNewsNotes = userNewsNotes,
+                            liveNewsContext = liveNewsPair.first,
+                            maxDataChars = 14000
+                        )
+                        MemberResult(
+                            providerName = "Cloudflare",
+                            modelName = config.cfModel,
+                            report = res.getOrNull(),
+                            error = res.exceptionOrNull()?.message
+                        )
+                    })
+                }
             }
             jobs.map { it.await() }
         }
@@ -148,7 +178,7 @@ class CouncilAnalyzer(
         }
 
         if (successful.isEmpty()) {
-            error("همه هوش مصنوعی‌ها با خطا مواجه شدند:\n" + warnings.joinToString("\n"))
+            error("همه هوش مصنوعی‌های روشن با خطا مواجه شدند:\n" + warnings.joinToString("\n"))
         }
 
         val mergedReport = mergeReports(
@@ -181,7 +211,7 @@ class CouncilAnalyzer(
         if (successful.size == 1) {
             val single = successful.first().second
             return single.copy(
-                consensusSummary = "تحلیل تک‌مدل (${successful.first().first.providerName}) — برای مقایسه چندمدلی، کلید Groq یا Cohere/Z.ai را هم اضافه کنید.",
+                consensusSummary = "تحلیل تک‌مدل (${successful.first().first.providerName}) — برای مقایسه چندمدلی، مدل‌های دیگر را نیز روشن کنید.",
                 memberOpinions = opinions,
                 searchSources = if (single.searchSources.isNotEmpty()) single.searchSources else searchSources
             )
@@ -383,5 +413,9 @@ class CouncilAnalyzer(
 
     companion object {
         const val GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions"
+        const val OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
+
+        fun cloudflareEndpoint(accountId: String): String =
+            "https://api.cloudflare.com/client/v4/accounts/${accountId.trim()}/ai/v1/chat/completions"
     }
 }
