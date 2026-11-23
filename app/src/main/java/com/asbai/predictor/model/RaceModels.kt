@@ -65,6 +65,16 @@ enum class ThirdProvider(
 }
 
 @Serializable
+data class PreScoredHorse(
+    val number: String = "-",
+    val horseName: String = "",
+    val mathScore: Int = 50,
+    val winRatePercent: Int = 0,
+    val placeRatePercent: Int = 0,
+    val summary: String = ""
+)
+
+@Serializable
 data class AnomalySignal(
     val title: String = "",
     val severity: String = "نکته",
@@ -90,6 +100,7 @@ data class PredictionReport(
     val confidencePercent: Int = 65,
     val consensusSummary: String = "",
     val memberOpinions: List<AiMemberOpinion> = emptyList(),
+    val preScores: List<PreScoredHorse> = emptyList(),
     val newsAndContextSummary: String = "",
     val tacticalScenario: String = "",
     val topThree: List<TopPick> = emptyList(),
