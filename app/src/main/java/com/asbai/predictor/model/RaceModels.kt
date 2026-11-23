@@ -69,6 +69,11 @@ data class PreScoredHorse(
     val number: String = "-",
     val horseName: String = "",
     val mathScore: Int = 50,
+    val mathWinProb: Int = 0,
+    val fairOdds: Double = 0.0,
+    val marketProbPercent: Int? = null,
+    val edgePercent: Int? = null,
+    val drawPct: Double? = null,
     val winRatePercent: Int = 0,
     val placeRatePercent: Int = 0,
     val summary: String = ""
