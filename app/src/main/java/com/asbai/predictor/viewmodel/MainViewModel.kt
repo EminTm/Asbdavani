@@ -52,13 +52,20 @@ data class MainUiState(
     val needsWebViewHint: Boolean = false,
     val currentReport: PredictionReport? = null,
     val history: List<SavedPrediction> = emptyList(),
+    val geminiEnabled: Boolean = true,
     val apiKey: String = "",
     val selectedModel: String = SettingsRepository.DEFAULT_MODEL,
+    val groqEnabled: Boolean = true,
     val groqApiKey: String = "",
     val groqModel: String = SettingsRepository.DEFAULT_GROQ_MODEL,
+    val thirdEnabled: Boolean = true,
     val thirdProvider: ThirdProvider = ThirdProvider.COHERE,
     val thirdApiKey: String = "",
     val thirdModel: String = ThirdProvider.COHERE.defaultModel,
+    val cfEnabled: Boolean = true,
+    val cfAccountId: String = "",
+    val cfApiToken: String = "",
+    val cfModel: String = SettingsRepository.DEFAULT_CF_MODEL,
     val riskProfile: RiskProfile = RiskProfile.BALANCED,
     val currentVersionName: String = "1.0",
     val availableUpdate: AppUpdateInfo? = null,
@@ -80,13 +87,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _uiState = MutableStateFlow(
         MainUiState(
+            geminiEnabled = repo.isGeminiEnabled(),
             apiKey = repo.getApiKey(),
             selectedModel = repo.getModel(),
+            groqEnabled = repo.isGroqEnabled(),
             groqApiKey = repo.getGroqApiKey(),
             groqModel = repo.getGroqModel(),
+            thirdEnabled = repo.isThirdEnabled(),
             thirdProvider = repo.getThirdProvider(),
             thirdApiKey = repo.getThirdApiKey(),
             thirdModel = repo.getThirdModel(),
+            cfEnabled = repo.isCfEnabled(),
+            cfAccountId = repo.getCfAccountId(),
+            cfApiToken = repo.getCfApiToken(),
+            cfModel = repo.getCfModel(),
             riskProfile = repo.getRiskProfile(),
             history = repo.getHistory(),
             currentVersionName = AppUpdater.getCurrentVersionName(appContext)
@@ -96,6 +110,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         checkForAppUpdate(silent = true)
+    }
+
+    fun toggleGemini(enabled: Boolean) {
+        repo.setGeminiEnabled(enabled)
+        _uiState.update { it.copy(geminiEnabled = enabled) }
+    }
+
+    fun toggleGroq(enabled: Boolean) {
+        repo.setGroqEnabled(enabled)
+        _uiState.update { it.copy(groqEnabled = enabled) }
+    }
+
+    fun toggleThird(enabled: Boolean) {
+        repo.setThirdEnabled(enabled)
+        _uiState.update { it.copy(thirdEnabled = enabled) }
+    }
+
+    fun toggleCf(enabled: Boolean) {
+        repo.setCfEnabled(enabled)
+        _uiState.update { it.copy(cfEnabled = enabled) }
     }
 
     fun checkForAppUpdate(silent: Boolean = false) {
@@ -258,12 +292,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
         val state = _uiState.value
-        val hasAnyKey = state.apiKey.isNotBlank() || state.groqApiKey.isNotBlank() || state.thirdApiKey.isNotBlank()
-        if (hasAnyKey && extractedText.isNotBlank()) {
+        val hasActive = (state.geminiEnabled && state.apiKey.isNotBlank()) ||
+            (state.groqEnabled && state.groqApiKey.isNotBlank()) ||
+            (state.thirdEnabled && state.thirdApiKey.isNotBlank()) ||
+            (state.cfEnabled && state.cfAccountId.isNotBlank() && state.cfApiToken.isNotBlank())
+
+        if (hasActive && extractedText.isNotBlank()) {
             analyzeCurrentRace()
-        } else if (!hasAnyKey) {
+        } else if (!hasActive) {
             _uiState.update {
-                it.copy(errorMessage = "اطلاعات استخراج شد؛ حداقل یک کلید هوش مصنوعی در تنظیمات وارد کنید.")
+                it.copy(errorMessage = "اطلاعات استخراج شد؛ حداقل یک هوش مصنوعی را روشن و کلیدش را ثبت کنید.")
             }
         }
     }
@@ -271,14 +309,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun analyzeCurrentRace() {
         val state = _uiState.value
         val activeMembers = buildList {
-            if (state.apiKey.isNotBlank()) add("Gemini")
-            if (state.groqApiKey.isNotBlank()) add("Groq")
-            if (state.thirdApiKey.isNotBlank()) add(state.thirdProvider.shortName)
+            if (state.geminiEnabled && state.apiKey.isNotBlank()) add("Gemini")
+            if (state.groqEnabled && state.groqApiKey.isNotBlank()) add("Groq")
+            if (state.thirdEnabled && state.thirdApiKey.isNotBlank()) add(state.thirdProvider.shortName)
+            if (state.cfEnabled && state.cfAccountId.isNotBlank() && state.cfApiToken.isNotBlank()) add("Cloudflare")
         }
 
         if (activeMembers.isEmpty()) {
             _uiState.update {
-                it.copy(errorMessage = "ابتدا حداقل یک کلید هوش مصنوعی ثبت کنید.", selectedTab = AppTab.SETTINGS)
+                it.copy(errorMessage = "هیچ هوش مصنوعی‌ای روشن و متصل نیست! از تنظیمات کلید را وارد یا روشن کنید.", selectedTab = AppTab.SETTINGS)
             }
             return
         }
@@ -294,7 +333,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     isAnalyzing = true,
                     livePreScores = pre.horses,
                     errorMessage = null,
-                    statusMessage = "شورای (${activeMembers.joinToString(" + ")}) با کمک پیش‌امتیاز ریاضی در حال تحلیل است..."
+                    statusMessage = "شورای (${activeMembers.joinToString(" + ")}) در حال تحلیل..."
                 )
             }
 
@@ -305,13 +344,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             val config = CouncilConfig(
+                geminiEnabled = state.geminiEnabled,
                 geminiKey = state.apiKey,
                 geminiModel = state.selectedModel,
+                groqEnabled = state.groqEnabled,
                 groqKey = state.groqApiKey,
                 groqModel = state.groqModel,
+                thirdEnabled = state.thirdEnabled,
                 thirdProvider = state.thirdProvider,
                 thirdKey = state.thirdApiKey,
-                thirdModel = state.thirdModel
+                thirdModel = state.thirdModel,
+                cfEnabled = state.cfEnabled,
+                cfAccountId = state.cfAccountId,
+                cfApiToken = state.cfApiToken,
+                cfModel = state.cfModel
             )
 
             councilAnalyzer.analyzeWithCouncil(
@@ -356,35 +402,56 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun saveAllSettings(
+        geminiEnabled: Boolean,
         geminiKey: String,
         geminiModel: String,
+        groqEnabled: Boolean,
         groqKey: String,
         groqModel: String,
+        thirdEnabled: Boolean,
         thirdProvider: ThirdProvider,
         thirdKey: String,
         thirdModel: String,
+        cfEnabled: Boolean,
+        cfAccountId: String,
+        cfApiToken: String,
+        cfModel: String,
         riskProfile: RiskProfile
     ) {
+        repo.setGeminiEnabled(geminiEnabled)
         repo.saveApiKey(geminiKey)
         repo.saveModel(geminiModel)
+        repo.setGroqEnabled(groqEnabled)
         repo.saveGroqApiKey(groqKey)
         repo.saveGroqModel(groqModel)
+        repo.setThirdEnabled(thirdEnabled)
         repo.saveThirdProvider(thirdProvider)
         repo.saveThirdApiKey(thirdKey)
         repo.saveThirdModel(thirdModel)
+        repo.setCfEnabled(cfEnabled)
+        repo.saveCfAccountId(cfAccountId)
+        repo.saveCfApiToken(cfApiToken)
+        repo.saveCfModel(cfModel)
         repo.saveRiskProfile(riskProfile)
 
         _uiState.update {
             it.copy(
+                geminiEnabled = repo.isGeminiEnabled(),
                 apiKey = repo.getApiKey(),
                 selectedModel = repo.getModel(),
+                groqEnabled = repo.isGroqEnabled(),
                 groqApiKey = repo.getGroqApiKey(),
                 groqModel = repo.getGroqModel(),
+                thirdEnabled = repo.isThirdEnabled(),
                 thirdProvider = repo.getThirdProvider(),
                 thirdApiKey = repo.getThirdApiKey(),
                 thirdModel = repo.getThirdModel(),
+                cfEnabled = repo.isCfEnabled(),
+                cfAccountId = repo.getCfAccountId(),
+                cfApiToken = repo.getCfApiToken(),
+                cfModel = repo.getCfModel(),
                 riskProfile = repo.getRiskProfile(),
-                statusMessage = "تنظیمات ذخیره شد.",
+                statusMessage = "تمامی تنظیمات ذخیره شد.",
                 errorMessage = null
             )
         }
@@ -467,6 +534,42 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 onFailure = { err ->
                     _uiState.update {
                         it.copy(isTestingKey = false, errorMessage = err.message ?: "تست ${provider.shortName} ناموفق بود.", statusMessage = null)
+                    }
+                }
+            )
+        }
+    }
+
+    fun testCloudflareKey(accountId: String, apiToken: String, model: String) {
+        if (accountId.isBlank()) {
+            _uiState.update { it.copy(errorMessage = "لطفاً Account ID کلودفلر را وارد کنید.") }
+            return
+        }
+        viewModelScope.launch {
+            _uiState.update { it.copy(isTestingKey = true, errorMessage = null, statusMessage = "در حال تست Cloudflare AI...") }
+            openAiCompatAnalyzer.testConnection(
+                providerName = "Cloudflare",
+                endpointUrl = CouncilAnalyzer.cloudflareEndpoint(accountId),
+                apiKey = apiToken,
+                model = model
+            ).fold(
+                onSuccess = { msg ->
+                    repo.saveCfAccountId(accountId)
+                    repo.saveCfApiToken(apiToken)
+                    repo.saveCfModel(model)
+                    _uiState.update {
+                        it.copy(
+                            isTestingKey = false,
+                            cfAccountId = repo.getCfAccountId(),
+                            cfApiToken = repo.getCfApiToken(),
+                            cfModel = repo.getCfModel(),
+                            statusMessage = msg
+                        )
+                    }
+                },
+                onFailure = { err ->
+                    _uiState.update {
+                        it.copy(isTestingKey = false, errorMessage = err.message ?: "تست Cloudflare AI ناموفق بود.", statusMessage = null)
                     }
                 }
             )
