@@ -56,9 +56,7 @@ class GeminiAnalyzer {
                         addJsonObject {
                             put("role", "user")
                             putJsonArray("parts") {
-                                addJsonObject {
-                                    put("text", "فقط کلمه OK را برگردان.")
-                                }
+                                addJsonObject { put("text", "فقط کلمه OK را برگردان.") }
                             }
                         }
                     }
@@ -98,7 +96,7 @@ class GeminiAnalyzer {
     ): Result<PredictionReport> = withContext(Dispatchers.IO) {
         runCatching {
             val cleanKey = apiKey.trim()
-            val cleanModel = model.trim().removePrefix("models/")
+            val primaryModel = model.trim().removePrefix("models/")
             if (cleanKey.isBlank()) error("کلید Gemini ثبت نشده است.")
             if (rawRaceData.isBlank()) error("داده‌ای برای تحلیل وجود ندارد.")
 
@@ -108,7 +106,7 @@ class GeminiAnalyzer {
             if (preFetchedNews == null && useWebSearch) {
                 val searchRes = withTimeoutOrNull(12_000L) {
                     runCatching {
-                        fetchLiveNewsContext(cleanKey, cleanModel, raceTitle, rawRaceData)
+                        fetchLiveNewsContext(cleanKey, primaryModel, raceTitle, rawRaceData)
                     }.getOrNull()
                 }
                 if (searchRes != null) {
@@ -126,29 +124,53 @@ class GeminiAnalyzer {
                 maxDataChars = 22000
             )
 
-            val payload = buildJsonObject {
-                putJsonObject("system_instruction") {
-                    putJsonArray("parts") {
-                        addJsonObject { put("text", systemPrompt) }
-                    }
+            val candidateModels = (listOf(primaryModel) + listOf(
+                "gemini-3.5-flash-lite",
+                "gemini-4-hydrogen",
+                "gemini-3.8-flash"
+            )).distinct()
+
+            var lastError: Exception? = null
+            var rawResponse: String? = null
+
+            for ((idx, candidateModel) in candidateModels.withIndex()) {
+                if (idx > 0) {
+                    runCatching { Thread.sleep(1500L) }
                 }
-                putJsonArray("contents") {
-                    addJsonObject {
-                        put("role", "user")
+                val payload = buildJsonObject {
+                    putJsonObject("system_instruction") {
                         putJsonArray("parts") {
-                            addJsonObject { put("text", userPrompt) }
+                            addJsonObject { put("text", systemPrompt) }
                         }
                     }
+                    putJsonArray("contents") {
+                        addJsonObject {
+                            put("role", "user")
+                            putJsonArray("parts") {
+                                addJsonObject { put("text", userPrompt) }
+                            }
+                        }
+                    }
+                    putJsonObject("generationConfig") {
+                        put("responseMimeType", "application/json")
+                        put("maxOutputTokens", 16384)
+                        applyFastThinkingIfNeeded(candidateModel)
+                    }
                 }
-                putJsonObject("generationConfig") {
-                    put("responseMimeType", "application/json")
-                    put("maxOutputTokens", 16384)
-                    applyFastThinkingIfNeeded(cleanModel)
+
+                try {
+                    rawResponse = executeGenerateContent(cleanKey, candidateModel, payload.toString()).first
+                    break
+                } catch (e: Exception) {
+                    lastError = e
+                    val msg = e.message.orEmpty()
+                    val isTransient = "(503)" in msg || "(429)" in msg || "(500)" in msg || "404" in msg
+                    if (!isTransient) throw e
                 }
             }
 
-            val (rawResponse, _) = executeGenerateContent(cleanKey, cleanModel, payload.toString())
-            val cleanedJson = RacePromptBuilder.extractPureJson(rawResponse)
+            val finalRaw = rawResponse ?: throw (lastError ?: IllegalStateException("خطای نامشخص Gemini"))
+            val cleanedJson = RacePromptBuilder.extractPureJson(finalRaw)
             val parsed = json.decodeFromString<PredictionReport>(cleanedJson)
             parsed.copy(searchSources = discoveredSources)
         }
@@ -168,26 +190,29 @@ class GeminiAnalyzer {
             داده: ${rawRaceData.take(1500)}
         """.trimIndent()
 
-        val payload = buildJsonObject {
-            putJsonArray("contents") {
-                addJsonObject {
-                    put("role", "user")
-                    putJsonArray("parts") {
-                        addJsonObject { put("text", searchPrompt) }
+        val candidateModels = (listOf(cleanModel, "gemini-3.5-flash-lite")).distinct()
+        for (m in candidateModels) {
+            val payload = buildJsonObject {
+                putJsonArray("contents") {
+                    addJsonObject {
+                        put("role", "user")
+                        putJsonArray("parts") {
+                            addJsonObject { put("text", searchPrompt) }
+                        }
                     }
                 }
-            }
-            putJsonArray("tools") {
-                addJsonObject {
-                    putJsonObject("google_search") {}
+                putJsonArray("tools") {
+                    addJsonObject { putJsonObject("google_search") {} }
+                }
+                putJsonObject("generationConfig") {
+                    put("maxOutputTokens", 1200)
+                    applyFastThinkingIfNeeded(m)
                 }
             }
-            putJsonObject("generationConfig") {
-                put("maxOutputTokens", 1200)
-                applyFastThinkingIfNeeded(cleanModel)
-            }
+            val attempt = runCatching { executeGenerateContent(apiKey, m, payload.toString()) }
+            if (attempt.isSuccess) return attempt.getOrThrow()
         }
-        return executeGenerateContent(apiKey, cleanModel, payload.toString())
+        return "" to emptyList()
     }
 
     private fun executeGenerateContent(
@@ -220,7 +245,7 @@ class GeminiAnalyzer {
                     401, 403 -> "خطای دسترسی Gemini (${response.code}): ${translated ?: apiMsg ?: bodyString.take(150)}"
                     404 -> "مدل '$cleanModel' در Gemini یافت نشد (404): ${apiMsg ?: ""}"
                     429 -> "سهمیه درخواست Gemini پر شده است (429): ${apiMsg ?: ""}"
-                    503 -> "سرور Gemini موقتاً شلوغ است (503)."
+                    503 -> "سرور Gemini ($cleanModel) موقتاً شلوغ است (503)."
                     else -> "خطای Gemini (کد ${response.code}): ${apiMsg ?: bodyString.take(150)}"
                 }
                 error(friendlyMsg)
