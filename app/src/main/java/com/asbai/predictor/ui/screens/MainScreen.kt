@@ -61,6 +61,7 @@ import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -70,7 +71,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.material3.SuggestionChip
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -108,12 +108,7 @@ fun MainScreen(viewModel: MainViewModel) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = {
-                    Text(
-                        text = "شورای هوشمند اسبدوانی",
-                        fontWeight = FontWeight.Bold
-                    )
-                },
+                title = { Text("شورای هوشمند اسبدوانی", fontWeight = FontWeight.Bold) },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.primary,
                     titleContentColor = MaterialTheme.colorScheme.onPrimary
@@ -139,11 +134,7 @@ fun MainScreen(viewModel: MainViewModel) {
             }
         }
     ) { innerPadding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-        ) {
+        Column(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
             state.availableUpdate?.let { update ->
                 UpdateAvailableBanner(
                     update = update,
@@ -153,21 +144,17 @@ fun MainScreen(viewModel: MainViewModel) {
                     onDismiss = { viewModel.dismissUpdateBanner() }
                 )
             }
-
             StatusBanners(
                 statusMessage = state.statusMessage,
                 errorMessage = state.errorMessage,
                 onDismiss = { viewModel.clearMessages() }
             )
-
             when (state.selectedTab) {
                 AppTab.PREDICT -> PredictTab(state = state, viewModel = viewModel)
                 AppTab.BROWSER -> LiveBrowserTab(
                     initialUrl = state.urlInput,
                     onUrlChanged = { viewModel.updateUrlInput(it) },
-                    onExtractAndPredict = { title, url, text ->
-                        viewModel.onWebViewExtracted(title, url, text)
-                    }
+                    onExtractAndPredict = { title, url, text -> viewModel.onWebViewExtracted(title, url, text) }
                 )
                 AppTab.HISTORY -> HistoryTab(state = state, viewModel = viewModel)
                 AppTab.SETTINGS -> SettingsTab(state = state, viewModel = viewModel)
@@ -185,12 +172,8 @@ private fun UpdateAvailableBanner(
     onDismiss: () -> Unit
 ) {
     ElevatedCard(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 6.dp),
-        colors = CardDefaults.elevatedCardColors(
-            containerColor = MaterialTheme.colorScheme.secondaryContainer
-        )
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
             Row(
@@ -205,83 +188,38 @@ private fun UpdateAvailableBanner(
                     modifier = Modifier.weight(1f)
                 )
                 if (!isDownloading) {
-                    Button(onClick = onInstallClick) {
-                        Text("نصب آپدیت")
-                    }
-                    IconButton(onClick = onDismiss) {
-                        Icon(Icons.Default.Close, contentDescription = "بستن")
-                    }
+                    Button(onClick = onInstallClick) { Text("نصب آپدیت") }
+                    IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, contentDescription = "بستن") }
                 }
             }
             if (isDownloading) {
                 Spacer(Modifier.height(6.dp))
-                LinearProgressIndicator(
-                    progress = { (progress.coerceIn(0, 100)) / 100f },
-                    modifier = Modifier.fillMaxWidth()
-                )
+                LinearProgressIndicator(progress = { (progress.coerceIn(0, 100)) / 100f }, modifier = Modifier.fillMaxWidth())
                 Spacer(Modifier.height(4.dp))
-                Text(
-                    text = "در حال دانلود... $progress٪",
-                    style = MaterialTheme.typography.labelSmall
-                )
+                Text("در حال دانلود... $progress٪", style = MaterialTheme.typography.labelSmall)
             }
         }
     }
 }
 
 @Composable
-private fun StatusBanners(
-    statusMessage: String?,
-    errorMessage: String?,
-    onDismiss: () -> Unit
-) {
-    if (errorMessage != null) {
-        ElevatedCard(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 6.dp),
-            colors = CardDefaults.elevatedCardColors(
-                containerColor = MaterialTheme.colorScheme.errorContainer
+private fun StatusBanners(statusMessage: String?, errorMessage: String?, onDismiss: () -> Unit) {
+    val msg = errorMessage ?: statusMessage ?: return
+    val isErr = errorMessage != null
+    ElevatedCard(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+        colors = CardDefaults.elevatedCardColors(
+            containerColor = if (isErr) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.primaryContainer
+        )
+    ) {
+        Row(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = msg,
+                color = if (isErr) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onPrimaryContainer,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.weight(1f)
             )
-        ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = errorMessage,
-                    color = MaterialTheme.colorScheme.onErrorContainer,
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.weight(1f)
-                )
-                IconButton(onClick = onDismiss) {
-                    Icon(Icons.Default.Close, contentDescription = "بستن")
-                }
-            }
-        }
-    } else if (statusMessage != null) {
-        ElevatedCard(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 6.dp),
-            colors = CardDefaults.elevatedCardColors(
-                containerColor = MaterialTheme.colorScheme.primaryContainer
-            )
-        ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = statusMessage,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer,
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.weight(1f)
-                )
-                IconButton(onClick = onDismiss) {
-                    Icon(Icons.Default.Close, contentDescription = "بستن")
-                }
-            }
+            IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, contentDescription = "بستن") }
         }
     }
 }
@@ -293,61 +231,74 @@ private fun PredictTab(state: MainUiState, viewModel: MainViewModel) {
     var showRawData by remember { mutableStateOf(true) }
     var showNewsNotes by remember { mutableStateOf(false) }
 
-    val hasAnyKey = state.apiKey.isNotBlank() || state.groqApiKey.isNotBlank() || state.thirdApiKey.isNotBlank()
+    val hasGeminiKey = state.apiKey.isNotBlank()
+    val hasGroqKey = state.groqApiKey.isNotBlank()
+    val hasThirdKey = state.thirdApiKey.isNotBlank()
+    val hasCfKey = state.cfAccountId.isNotBlank() && state.cfApiToken.isNotBlank()
 
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(12.dp),
+        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         ElevatedCard(
             modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.elevatedCardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant
-            )
+            colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
         ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+            Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
                 Row(
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    CouncilMemberBadge("Gemini", state.apiKey.isNotBlank())
-                    CouncilMemberBadge("Groq", state.groqApiKey.isNotBlank())
-                    CouncilMemberBadge(state.thirdProvider.shortName, state.thirdApiKey.isNotBlank())
+                    Text("اعضای شورا (برای روشن/خاموش لمس کنید):", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                    TextButton(onClick = { viewModel.selectTab(AppTab.SETTINGS) }) { Text("کلیدها") }
                 }
-                TextButton(onClick = { viewModel.selectTab(AppTab.SETTINGS) }) {
-                    Text(if (hasAnyKey) "تنظیم کلیدها" else "ثبت کلید")
+                Row(
+                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    CouncilToggleChip("Gemini", hasGeminiKey, state.geminiEnabled) {
+                        if (hasGeminiKey) viewModel.toggleGemini(!state.geminiEnabled)
+                        else {
+                            viewModel.showError("ابتدا کلید Gemini را در تنظیمات وارد کنید.")
+                            viewModel.selectTab(AppTab.SETTINGS)
+                        }
+                    }
+                    CouncilToggleChip("Groq", hasGroqKey, state.groqEnabled) {
+                        if (hasGroqKey) viewModel.toggleGroq(!state.groqEnabled)
+                        else {
+                            viewModel.showError("ابتدا کلید Groq را در تنظیمات وارد کنید.")
+                            viewModel.selectTab(AppTab.SETTINGS)
+                        }
+                    }
+                    CouncilToggleChip(state.thirdProvider.shortName, hasThirdKey, state.thirdEnabled) {
+                        if (hasThirdKey) viewModel.toggleThird(!state.thirdEnabled)
+                        else {
+                            viewModel.showError("ابتدا کلید ${state.thirdProvider.shortName} را وارد کنید.")
+                            viewModel.selectTab(AppTab.SETTINGS)
+                        }
+                    }
+                    CouncilToggleChip("Cloudflare", hasCfKey, state.cfEnabled) {
+                        if (hasCfKey) viewModel.toggleCf(!state.cfEnabled)
+                        else {
+                            viewModel.showError("ابتدا Account ID و Token کلودفلر را در تنظیمات وارد کنید.")
+                            viewModel.selectTab(AppTab.SETTINGS)
+                        }
+                    }
                 }
             }
         }
 
         ElevatedCard(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(14.dp)) {
-                Text(
-                    text = "انتخاب سایت مسابقات",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold
-                )
+                Text("انتخاب سایت مسابقات", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(6.dp))
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
+                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     QUICK_SITES.forEach { (label, siteUrl) ->
-                        SuggestionChip(
-                            onClick = { viewModel.updateUrlInput(siteUrl) },
-                            label = { Text(label) }
-                        )
+                        SuggestionChip(onClick = { viewModel.updateUrlInput(siteUrl) }, label = { Text(label) })
                     }
                 }
                 Spacer(Modifier.height(6.dp))
@@ -359,39 +310,28 @@ private fun PredictTab(state: MainUiState, viewModel: MainViewModel) {
                     modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(Modifier.height(8.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(
                         onClick = { viewModel.fetchFromSite() },
                         enabled = !state.isFetchingSite && !state.isAnalyzing,
                         modifier = Modifier.weight(1f)
                     ) {
                         if (state.isFetchingSite) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.width(18.dp).height(18.dp),
-                                strokeWidth = 2.dp,
-                                color = MaterialTheme.colorScheme.onPrimary
-                            )
+                            CircularProgressIndicator(modifier = Modifier.width(18.dp).height(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
                             Spacer(Modifier.width(8.dp))
                         }
                         Text("دریافت مستقیم")
                     }
-                    OutlinedButton(
-                        onClick = { viewModel.selectTab(AppTab.BROWSER) },
-                        modifier = Modifier.weight(1f)
-                    ) {
+                    OutlinedButton(onClick = { viewModel.selectTab(AppTab.BROWSER) }, modifier = Modifier.weight(1f)) {
                         Icon(Icons.Default.Language, contentDescription = null)
                         Spacer(Modifier.width(6.dp))
                         Text("باز کردن در مرورگر")
                     }
                 }
-
                 if (state.needsWebViewHint) {
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        text = "نکته: برای Unibet و برخی صفحات TJK / اسبدوانی از دکمه «باز کردن در مرورگر» وارد شوید و دکمه «استخراج و پیش‌بینی همین صفحه» را بزنید.",
+                        text = "نکته: برای Unibet و برخی صفحات TJK/اسبدوانی از دکمه «باز کردن در مرورگر» وارد شوید و دکمه «استخراج و پیش‌بینی همین صفحه» را بزنید.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.primary
                     )
@@ -401,25 +341,14 @@ private fun PredictTab(state: MainUiState, viewModel: MainViewModel) {
 
         if (state.discoveredLinks.isNotEmpty()) {
             Column {
-                Text(
-                    text = "لینک‌های پیداشده در صفحه (برای دریافت لمس کنید):",
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.Bold
-                )
+                Text("لینک‌های پیداشده در صفحه:", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(6.dp))
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
+                Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     state.discoveredLinks.forEach { link ->
                         AssistChip(
                             onClick = { viewModel.fetchFromSite(link.url) },
                             label = { Text(link.title) },
-                            leadingIcon = {
-                                Icon(Icons.Default.Link, contentDescription = null)
-                            }
+                            leadingIcon = { Icon(Icons.Default.Link, contentDescription = null) }
                         )
                     }
                 }
@@ -429,42 +358,26 @@ private fun PredictTab(state: MainUiState, viewModel: MainViewModel) {
         OutlinedCard(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(12.dp)) {
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { showRawData = !showRawData },
+                    modifier = Modifier.fillMaxWidth().clickable { showRawData = !showRawData },
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = "اطلاعات خام / جدول مسابقه (${state.raceDataInput.length} کاراکتر)",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Icon(
-                        imageVector = if (showRawData) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                        contentDescription = null
-                    )
+                    Text("اطلاعات خام / جدول (${state.raceDataInput.length} کاراکتر)", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                    Icon(if (showRawData) Icons.Default.ExpandLess else Icons.Default.ExpandMore, contentDescription = null)
                 }
-
                 if (showRawData) {
                     Spacer(Modifier.height(8.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilledTonalButton(
-                            onClick = {
-                                val pasted = clipboardManager.getText()?.text.orEmpty()
-                                if (pasted.isNotBlank()) {
-                                    viewModel.updateRaceDataInput(pasted)
-                                }
-                            }
-                        ) {
+                        FilledTonalButton(onClick = {
+                            val pasted = clipboardManager.getText()?.text.orEmpty()
+                            if (pasted.isNotBlank()) viewModel.updateRaceDataInput(pasted)
+                        }) {
                             Icon(Icons.Default.ContentPaste, contentDescription = null)
                             Spacer(Modifier.width(6.dp))
                             Text("چسباندن متن")
                         }
                         if (state.raceDataInput.isNotEmpty()) {
-                            TextButton(onClick = { viewModel.updateRaceDataInput("") }) {
-                                Text("پاک کردن")
-                            }
+                            TextButton(onClick = { viewModel.updateRaceDataInput("") }) { Text("پاک کردن") }
                         }
                     }
                     Spacer(Modifier.height(6.dp))
@@ -483,45 +396,22 @@ private fun PredictTab(state: MainUiState, viewModel: MainViewModel) {
         if (state.livePreScores.isNotEmpty() && state.currentReport == null) {
             ElevatedCard(
                 modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.elevatedCardColors(
-                    containerColor = Color(0xFFF1F8E9)
-                )
+                colors = CardDefaults.elevatedCardColors(containerColor = Color(0xFFF1F8E9))
             ) {
                 Column(modifier = Modifier.padding(12.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Default.BarChart, contentDescription = null, tint = Color(0xFF2E7D32))
                         Spacer(Modifier.width(6.dp))
-                        Text(
-                            text = "پیش‌امتیاز ریاضی فوری (قبل از AI)",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFF1B5E20)
-                        )
+                        Text("پیش‌امتیاز ریاضی فوری Equintel (قبل از AI)", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = Color(0xFF1B5E20))
                     }
                     Spacer(Modifier.height(6.dp))
                     state.livePreScores.take(5).forEachIndexed { idx, h ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(
-                                text = "${idx + 1}. #${h.number} ${h.horseName}",
-                                style = MaterialTheme.typography.bodySmall,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                text = "${h.mathScore}/100",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = Color(0xFF2E7D32),
-                                fontWeight = FontWeight.Bold
-                            )
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("${idx + 1}. #${h.number} ${h.horseName}", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
+                            Text("${h.mathWinProb}٪", style = MaterialTheme.typography.labelMedium, color = Color(0xFF2E7D32), fontWeight = FontWeight.Bold)
                         }
-                        if (h.summary.isNotBlank()) {
-                            Text(text = h.summary, style = MaterialTheme.typography.labelSmall)
-                        }
-                        if (idx < minOf(state.livePreScores.size, 5) - 1) {
-                            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-                        }
+                        if (h.summary.isNotBlank()) Text(h.summary, style = MaterialTheme.typography.labelSmall)
+                        if (idx < minOf(state.livePreScores.size, 5) - 1) HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
                     }
                 }
             }
@@ -534,60 +424,35 @@ private fun PredictTab(state: MainUiState, viewModel: MainViewModel) {
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Icon(
-                            Icons.Default.Search,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary
-                        )
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                        Icon(Icons.Default.Search, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                         Spacer(Modifier.width(8.dp))
                         Column {
+                            Text("جستجوی زنده اخبار در گوگل", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                             Text(
-                                text = "جستجوی زنده اخبار در گوگل",
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                text = "توسط Gemini جستجو و با کل شورا به اشتراک گذاشته می‌شود",
+                                text = if (state.geminiEnabled && hasGeminiKey) "توسط Gemini جستجو می‌شود" else "برای جستجو، Gemini باید روشن باشد",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
-                    Switch(
-                        checked = state.useWebSearch,
-                        onCheckedChange = { viewModel.toggleWebSearch(it) }
-                    )
+                    Switch(checked = state.useWebSearch, onCheckedChange = { viewModel.toggleWebSearch(it) })
                 }
-
                 Spacer(Modifier.height(8.dp))
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { showNewsNotes = !showNewsNotes },
+                    modifier = Modifier.fillMaxWidth().clickable { showNewsNotes = !showNewsNotes },
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = "افزودن خبر یا نکته پیست (اختیاری)",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    Icon(
-                        imageVector = if (showNewsNotes) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                        contentDescription = null
-                    )
+                    Text("افزودن خبر یا نکته پیست (اختیاری)", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                    Icon(if (showNewsNotes) Icons.Default.ExpandLess else Icons.Default.ExpandMore, contentDescription = null)
                 }
-
                 if (showNewsNotes || state.newsNotesInput.isNotBlank()) {
                     Spacer(Modifier.height(6.dp))
                     OutlinedTextField(
                         value = state.newsNotesInput,
                         onValueChange = { viewModel.updateNewsNotes(it) },
-                        label = { Text("مثلاً: پیست سنگین است، تغییر چابکسوار لحظه آخری، انصراف اسب ۳...") },
+                        label = { Text("مثلاً: پیست سنگین است، تغییر چابکسوار لحظه آخری...") },
                         minLines = 2,
                         maxLines = 4,
                         modifier = Modifier.fillMaxWidth()
@@ -599,16 +464,10 @@ private fun PredictTab(state: MainUiState, viewModel: MainViewModel) {
         Button(
             onClick = { viewModel.analyzeCurrentRace() },
             enabled = !state.isAnalyzing && state.raceDataInput.isNotBlank(),
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(52.dp)
+            modifier = Modifier.fillMaxWidth().height(52.dp)
         ) {
             if (state.isAnalyzing) {
-                CircularProgressIndicator(
-                    modifier = Modifier.width(20.dp).height(20.dp),
-                    strokeWidth = 2.dp,
-                    color = MaterialTheme.colorScheme.onPrimary
-                )
+                CircularProgressIndicator(modifier = Modifier.width(20.dp).height(20.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
                 Spacer(Modifier.width(10.dp))
                 Text("شورا در حال تحلیل همزمان...")
             } else {
@@ -623,12 +482,8 @@ private fun PredictTab(state: MainUiState, viewModel: MainViewModel) {
                 report = report,
                 onExportPdf = {
                     PdfExporter.exportAndShare(context, report).fold(
-                        onSuccess = {
-                            viewModel.showStatus("فایل PDF ساخته شد و آماده ارسال است.")
-                        },
-                        onFailure = { err ->
-                            viewModel.showError("خطا در ساخت PDF: ${err.message}")
-                        }
+                        onSuccess = { viewModel.showStatus("فایل PDF ساخته شد و آماده ارسال است.") },
+                        onFailure = { err -> viewModel.showError("خطا در ساخت PDF: ${err.message}") }
                     )
                 }
             )
@@ -637,22 +492,28 @@ private fun PredictTab(state: MainUiState, viewModel: MainViewModel) {
 }
 
 @Composable
-private fun CouncilMemberBadge(name: String, active: Boolean) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Icon(
-            imageVector = Icons.Default.CheckCircle,
-            contentDescription = null,
-            tint = if (active) Color(0xFF1B8A5A) else Color(0xFF9E9E9E),
-            modifier = Modifier.width(15.dp).height(15.dp)
-        )
-        Spacer(Modifier.width(3.dp))
-        Text(
-            text = name,
-            style = MaterialTheme.typography.labelMedium,
-            fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
-            color = if (active) MaterialTheme.colorScheme.onSurface else Color(0xFF757575)
-        )
-    }
+private fun CouncilToggleChip(name: String, hasKey: Boolean, enabled: Boolean, onToggle: () -> Unit) {
+    val isActive = hasKey && enabled
+    FilterChip(
+        selected = isActive,
+        onClick = onToggle,
+        leadingIcon = {
+            Icon(
+                imageVector = if (isActive) Icons.Default.CheckCircle else Icons.Default.Close,
+                contentDescription = null,
+                tint = if (isActive) Color(0xFF1B8A5A) else Color(0xFF8A8A8A),
+                modifier = Modifier.width(16.dp).height(16.dp)
+            )
+        },
+        label = {
+            val txt = when {
+                !hasKey -> "$name (بدون کلید)"
+                enabled -> "$name (روشن)"
+                else -> "$name (خاموش)"
+            }
+            Text(txt, style = MaterialTheme.typography.labelMedium)
+        }
+    )
 }
 
 @SuppressLint("SetJavaScriptEnabled")
@@ -663,17 +524,13 @@ private fun LiveBrowserTab(
     onExtractAndPredict: (title: String, url: String, extractedText: String) -> Unit
 ) {
     var webView by remember { mutableStateOf<WebView?>(null) }
-    var currentUrl by remember {
-        mutableStateOf(initialUrl.ifBlank { "https://asbdavani.app/racecards" })
-    }
+    var currentUrl by remember { mutableStateOf(initialUrl.ifBlank { "https://asbdavani.app/racecards" }) }
     var urlBarText by remember { mutableStateOf(currentUrl) }
     var currentTitle by remember { mutableStateOf("مرورگر مسابقات") }
     var progress by remember { mutableIntStateOf(0) }
 
     fun navigateTo(raw: String) {
-        val target = raw.trim().let {
-            if (it.startsWith("http://") || it.startsWith("https://")) it else "https://$it"
-        }
+        val target = raw.trim().let { if (it.startsWith("http://") || it.startsWith("https://")) it else "https://$it" }
         currentUrl = target
         urlBarText = target
         onUrlChanged(target)
@@ -682,13 +539,7 @@ private fun LiveBrowserTab(
 
     Box(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
-            // نوار آدرس و دکمه‌های کنترل
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 6.dp, vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+            Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = { if (webView?.canGoBack() == true) webView?.goBack() }) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "عقب")
                 }
@@ -703,17 +554,11 @@ private fun LiveBrowserTab(
                     modifier = Modifier.weight(1f)
                 )
                 Spacer(Modifier.width(4.dp))
-                TextButton(onClick = { navigateTo(urlBarText) }) {
-                    Text("برو", fontWeight = FontWeight.Bold)
-                }
+                TextButton(onClick = { navigateTo(urlBarText) }) { Text("برو", fontWeight = FontWeight.Bold) }
             }
 
-            // چیپ‌های دسترسی سریع به سایت‌های اسبدوانی + Unibet + TJK
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 8.dp, vertical = 2.dp),
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp, vertical = 2.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 QUICK_SITES.forEach { (label, siteUrl) ->
@@ -726,10 +571,7 @@ private fun LiveBrowserTab(
             }
 
             if (progress in 1..99) {
-                LinearProgressIndicator(
-                    progress = { progress / 100f },
-                    modifier = Modifier.fillMaxWidth()
-                )
+                LinearProgressIndicator(progress = { progress / 100f }, modifier = Modifier.fillMaxWidth())
             }
 
             AndroidView(
@@ -776,8 +618,7 @@ private fun LiveBrowserTab(
                         var tables = document.querySelectorAll("table");
                         tables.forEach(function(table, idx) {
                             parts.push("--- جدول " + (idx + 1) + " ---");
-                            var rows = table.querySelectorAll("tr");
-                            rows.forEach(function(row) {
+                            table.querySelectorAll("tr").forEach(function(row) {
                                 var cells = [];
                                 row.querySelectorAll("th, td").forEach(function(cell) {
                                     var t = (cell.innerText || "").replace(/\s+/g, " ").trim();
@@ -802,19 +643,13 @@ private fun LiveBrowserTab(
                 """.trimIndent()
 
                 webView?.evaluateJavascript(js) { rawResult ->
-                    val decoded = runCatching {
-                        JSONTokener(rawResult).nextValue() as? String
-                    }.getOrNull().orEmpty()
-                    if (decoded.isNotBlank()) {
-                        onExtractAndPredict(currentTitle, currentUrl, decoded)
-                    }
+                    val decoded = runCatching { JSONTokener(rawResult).nextValue() as? String }.getOrNull().orEmpty()
+                    if (decoded.isNotBlank()) onExtractAndPredict(currentTitle, currentUrl, decoded)
                 }
             },
             icon = { Icon(Icons.Default.AutoAwesome, contentDescription = null) },
             text = { Text("استخراج و پیش‌بینی همین صفحه") },
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(16.dp)
+            modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp)
         )
     }
 }
@@ -822,56 +657,24 @@ private fun LiveBrowserTab(
 @Composable
 private fun HistoryTab(state: MainUiState, viewModel: MainViewModel) {
     if (state.history.isEmpty()) {
-        Box(
-            modifier = Modifier.fillMaxSize(),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = "هنوز هیچ پیش‌بینی‌ای ذخیره نشده است.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text("هنوز هیچ پیش‌بینی‌ای ذخیره نشده است.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         return
     }
 
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
+    LazyColumn(modifier = Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         items(state.history, key = { it.id }) { item ->
-            OutlinedCard(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { viewModel.openHistoryItem(item) }
-            ) {
-                Row(
-                    modifier = Modifier.padding(14.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+            OutlinedCard(modifier = Modifier.fillMaxWidth().clickable { viewModel.openHistoryItem(item) }) {
+                Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = item.report.raceSummary.ifBlank { "گزارش مسابقه" },
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold
-                        )
+                        Text(item.report.raceSummary.ifBlank { "گزارش مسابقه" }, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                         Spacer(Modifier.height(4.dp))
-                        val topPick = item.report.topThree.firstOrNull()
-                        if (topPick != null) {
-                            Text(
-                                text = "انتخاب اول: #${topPick.number} ${topPick.horseName} (${topPick.winProbability}٪)",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.primary
-                            )
+                        item.report.topThree.firstOrNull()?.let { topPick ->
+                            Text("انتخاب اول: #${topPick.number} ${topPick.horseName} (${topPick.winProbability}٪)", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
                         }
                         Spacer(Modifier.height(2.dp))
-                        Text(
-                            text = item.timestamp,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        Text(item.timestamp, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     IconButton(onClick = { viewModel.deleteHistoryItem(item.id) }) {
                         Icon(Icons.Default.Delete, contentDescription = "حذف")
@@ -884,64 +687,44 @@ private fun HistoryTab(state: MainUiState, viewModel: MainViewModel) {
 
 @Composable
 private fun SettingsTab(state: MainUiState, viewModel: MainViewModel) {
+    var geminiEnabled by remember(state.geminiEnabled) { mutableStateOf(state.geminiEnabled) }
     var geminiKeyInput by remember(state.apiKey) { mutableStateOf(state.apiKey) }
     var geminiModelInput by remember(state.selectedModel) { mutableStateOf(state.selectedModel) }
 
+    var groqEnabled by remember(state.groqEnabled) { mutableStateOf(state.groqEnabled) }
     var groqKeyInput by remember(state.groqApiKey) { mutableStateOf(state.groqApiKey) }
     var groqModelInput by remember(state.groqModel) { mutableStateOf(state.groqModel) }
 
+    var thirdEnabled by remember(state.thirdEnabled) { mutableStateOf(state.thirdEnabled) }
     var selectedThirdProvider by remember(state.thirdProvider) { mutableStateOf(state.thirdProvider) }
     var thirdKeyInput by remember(state.thirdApiKey) { mutableStateOf(state.thirdApiKey) }
     var thirdModelInput by remember(state.thirdModel) { mutableStateOf(state.thirdModel) }
 
+    var cfEnabled by remember(state.cfEnabled) { mutableStateOf(state.cfEnabled) }
+    var cfAccountInput by remember(state.cfAccountId) { mutableStateOf(state.cfAccountId) }
+    var cfTokenInput by remember(state.cfApiToken) { mutableStateOf(state.cfApiToken) }
+    var cfModelInput by remember(state.cfModel) { mutableStateOf(state.cfModel) }
+
     var selectedRisk by remember(state.riskProfile) { mutableStateOf(state.riskProfile) }
 
     val thirdPresets = when (selectedThirdProvider) {
-        ThirdProvider.COHERE -> listOf(
-            "command-a-plus-05-2026" to "قوی‌ترین مدل کوهیر (پیشنهادی)",
-            "command-a-03-2025" to "چندزبانه ۱۱۱B پایدار"
-        )
-        ThirdProvider.ZAI -> listOf(
-            "glm-4.7-flash" to "رایگان دائمی (پیشنهادی)",
-            "glm-4.5-flash" to "سریع و سبک"
-        )
-        ThirdProvider.OPENROUTER -> listOf(
-            "nvidia/nemotron-3-ultra-550b-a55b:free" to "۵۵۰B انویدیا",
-            "nvidia/nemotron-3.5-super-vl:free" to "پایدار انویدیا",
-            "openrouter/free" to "روتر خودکار"
-        )
+        ThirdProvider.COHERE -> listOf("command-a-plus-05-2026" to "قوی‌ترین کوهیر", "command-a-03-2025" to "چندزبانه ۱۱۱B")
+        ThirdProvider.ZAI -> listOf("glm-4.7-flash" to "رایگان دائمی", "glm-4.6v-flash" to "سریع و رایگان")
+        ThirdProvider.OPENROUTER -> listOf("nvidia/nemotron-3-ultra-550b-a55b:free" to "۵۵۰B انویدیا", "openrouter/free" to "روتر خودکار")
     }
 
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(14.dp),
+        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         ElevatedCard(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(14.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Column {
-                        Text(
-                            text = "به‌روزرسانی خودکار برنامه",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = "نسخه فعلی: ${state.currentVersionName}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        Text("به‌روزرسانی خودکار برنامه", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                        Text("نسخه فعلی: ${state.currentVersionName}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    OutlinedButton(
-                        onClick = { viewModel.checkForAppUpdate(silent = false) },
-                        enabled = !state.isCheckingUpdate && !state.isDownloadingUpdate
-                    ) {
+                    OutlinedButton(onClick = { viewModel.checkForAppUpdate(silent = false) }, enabled = !state.isCheckingUpdate && !state.isDownloadingUpdate) {
                         Icon(Icons.Default.Refresh, contentDescription = null)
                         Spacer(Modifier.width(6.dp))
                         Text(if (state.isCheckingUpdate) "در حال بررسی..." else "بررسی آپدیت")
@@ -949,59 +732,47 @@ private fun SettingsTab(state: MainUiState, viewModel: MainViewModel) {
                 }
                 state.availableUpdate?.let { upd ->
                     Spacer(Modifier.height(10.dp))
-                    Button(
-                        onClick = { viewModel.installAvailableUpdate() },
-                        enabled = !state.isDownloadingUpdate,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(
-                            if (state.isDownloadingUpdate) {
-                                "در حال دانلود (${state.updateDownloadProgress}٪)..."
-                            } else {
-                                "دانلود و نصب نسخه ${upd.versionName}"
-                            }
-                        )
+                    Button(onClick = { viewModel.installAvailableUpdate() }, enabled = !state.isDownloadingUpdate, modifier = Modifier.fillMaxWidth()) {
+                        Text(if (state.isDownloadingUpdate) "در حال دانلود (${state.updateDownloadProgress}٪)..." else "دانلود و نصب نسخه ${upd.versionName}")
                     }
                 }
             }
         }
 
         ProviderSettingsCard(
-            title = "۱. Google Gemini (رایگان + جستجوی اخبار)",
+            title = "۱. Google Gemini",
+            enabled = geminiEnabled,
+            onEnabledChange = { geminiEnabled = it },
             helperText = "کلید رایگان از aistudio.google.com/apikey",
             keyLabel = "Gemini API Key",
             apiKey = geminiKeyInput,
             onApiKeyChange = { geminiKeyInput = it },
             model = geminiModelInput,
             onModelChange = { geminiModelInput = it },
-            presetModels = listOf(
-                "gemini-4-hydrogen" to "جدیدترین و قوی‌ترین رایگان",
-                "gemini-3.8-flash" to "پایدار نسل ۳",
-                "gemini-3.5-flash-lite" to "سریع و سبک"
-            ),
+            presetModels = listOf("gemini-3.5-flash-lite" to "خلوت‌ترین", "gemini-4-hydrogen" to "نسل ۴", "gemini-3.8-flash" to "نسل ۳"),
             isTesting = state.isTestingKey,
             onTestClick = { viewModel.testGeminiKey(geminiKeyInput, geminiModelInput) }
         )
 
         ProviderSettingsCard(
-            title = "۲. Groq (رایگان دائمی و فوق‌سریع)",
+            title = "۲. Groq (رایگان و فوق‌سریع)",
+            enabled = groqEnabled,
+            onEnabledChange = { groqEnabled = it },
             helperText = "کلید رایگان از console.groq.com/keys (شروع با gsk_)",
             keyLabel = "Groq API Key",
             apiKey = groqKeyInput,
             onApiKeyChange = { groqKeyInput = it },
             model = groqModelInput,
             onModelChange = { groqModelInput = it },
-            presetModels = listOf(
-                "qwen/qwen3.8-27b" to "عالی در فارسی و JSON",
-                "openai/gpt-oss-120b" to "قدرتمند ۱۲۰B",
-                "openai/gpt-oss-20b" to "سریع ۲۰B"
-            ),
+            presetModels = listOf("qwen/qwen3.8-27b" to "عالی در فارسی", "openai/gpt-oss-120b" to "قدرتمند ۱۲۰B", "openai/gpt-oss-20b" to "سریع ۲۰B"),
             isTesting = state.isTestingKey,
             onTestClick = { viewModel.testGroqKey(groqKeyInput, groqModelInput) }
         )
 
         ProviderSettingsCard(
-            title = "۳. عضو سوم شورا (${selectedThirdProvider.shortName})",
+            title = "۳. عضو سوم (${selectedThirdProvider.shortName})",
+            enabled = thirdEnabled,
+            onEnabledChange = { thirdEnabled = it },
             helperText = selectedThirdProvider.helperText,
             keyLabel = "${selectedThirdProvider.shortName} API Key",
             apiKey = thirdKeyInput,
@@ -1010,16 +781,9 @@ private fun SettingsTab(state: MainUiState, viewModel: MainViewModel) {
             onModelChange = { thirdModelInput = it },
             presetModels = thirdPresets,
             isTesting = state.isTestingKey,
-            onTestClick = {
-                viewModel.testThirdKey(selectedThirdProvider, thirdKeyInput, thirdModelInput)
-            },
+            onTestClick = { viewModel.testThirdKey(selectedThirdProvider, thirdKeyInput, thirdModelInput) },
             topSlot = {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
+                Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     ThirdProvider.entries.forEach { provider ->
                         FilterChip(
                             selected = selectedThirdProvider == provider,
@@ -1035,28 +799,45 @@ private fun SettingsTab(state: MainUiState, viewModel: MainViewModel) {
             }
         )
 
-        ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.padding(14.dp)) {
-                Text(
-                    text = "استراتژی پیش‌بینی شورا",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
+        ProviderSettingsCard(
+            title = "۴. Cloudflare Workers AI (جایگزین پایدار)",
+            enabled = cfEnabled,
+            onEnabledChange = { cfEnabled = it },
+            helperText = "از اکانت dash.cloudflare.com (روزانه ۱۰,۰۰۰ Neuron رایگان، بدون خطای ۵۰۳)",
+            keyLabel = "Cloudflare Workers AI Token",
+            apiKey = cfTokenInput,
+            onApiKeyChange = { cfTokenInput = it },
+            model = cfModelInput,
+            onModelChange = { cfModelInput = it },
+            presetModels = listOf(
+                "@cf/deepseek-ai/deepseek-v4.1-flash-1017" to "DeepSeek V4.1",
+                "@cf/google/gemma-4-26b-a4b-it" to "Gemma 4 26B",
+                "@cf/qwen/qwen3.8-27b" to "Qwen 3.8 فارسی",
+                "@cf/zai-org/glm-4.7-flash" to "GLM 4.7"
+            ),
+            isTesting = state.isTestingKey,
+            onTestClick = { viewModel.testCloudflareKey(cfAccountInput, cfTokenInput, cfModelInput) },
+            topSlot = {
+                OutlinedTextField(
+                    value = cfAccountInput,
+                    onValueChange = { cfAccountInput = it },
+                    label = { Text("Cloudflare Account ID (کد ۳۲ کاراکتری)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(Modifier.height(8.dp))
+            }
+        )
+
+        ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(14.dp)) {
+                Text("استراتژی پیش‌بینی شورا", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(8.dp))
                 RiskProfile.entries.forEach { profile ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { selectedRisk = profile }
-                            .padding(vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        RadioButton(
-                            selected = selectedRisk == profile,
-                            onClick = { selectedRisk = profile }
-                        )
+                    Row(modifier = Modifier.fillMaxWidth().clickable { selectedRisk = profile }.padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(selected = selectedRisk == profile, onClick = { selectedRisk = profile })
                         Spacer(Modifier.width(6.dp))
-                        Text(text = profile.label, style = MaterialTheme.typography.bodyMedium)
+                        Text(profile.label, style = MaterialTheme.typography.bodyMedium)
                     }
                 }
             }
@@ -1065,19 +846,14 @@ private fun SettingsTab(state: MainUiState, viewModel: MainViewModel) {
         Button(
             onClick = {
                 viewModel.saveAllSettings(
-                    geminiKey = geminiKeyInput,
-                    geminiModel = geminiModelInput,
-                    groqKey = groqKeyInput,
-                    groqModel = groqModelInput,
-                    thirdProvider = selectedThirdProvider,
-                    thirdKey = thirdKeyInput,
-                    thirdModel = thirdModelInput,
-                    riskProfile = selectedRisk
+                    geminiEnabled, geminiKeyInput, geminiModelInput,
+                    groqEnabled, groqKeyInput, groqModelInput,
+                    thirdEnabled, selectedThirdProvider, thirdKeyInput, thirdModelInput,
+                    cfEnabled, cfAccountInput, cfTokenInput, cfModelInput,
+                    selectedRisk
                 )
             },
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(50.dp)
+            modifier = Modifier.fillMaxWidth().height(50.dp)
         ) {
             Text("ذخیره همه تنظیمات", fontWeight = FontWeight.Bold)
         }
@@ -1087,6 +863,8 @@ private fun SettingsTab(state: MainUiState, viewModel: MainViewModel) {
 @Composable
 private fun ProviderSettingsCard(
     title: String,
+    enabled: Boolean,
+    onEnabledChange: (Boolean) -> Unit,
     helperText: String,
     keyLabel: String,
     apiKey: String,
@@ -1102,22 +880,17 @@ private fun ProviderSettingsCard(
 
     ElevatedCard(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(14.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.Key, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold
-                )
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                    Icon(Icons.Default.Key, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.width(8.dp))
+                    Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                }
+                Switch(checked = enabled, onCheckedChange = onEnabledChange)
             }
             Spacer(Modifier.height(6.dp))
             topSlot()
-            Text(
-                text = helperText,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            Text(helperText, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(8.dp))
             OutlinedTextField(
                 value = apiKey,
@@ -1127,46 +900,21 @@ private fun ProviderSettingsCard(
                 visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
                 trailingIcon = {
                     IconButton(onClick = { showKey = !showKey }) {
-                        Icon(
-                            imageVector = if (showKey) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                            contentDescription = "نمایش کلید"
-                        )
+                        Icon(if (showKey) Icons.Default.VisibilityOff else Icons.Default.Visibility, contentDescription = "نمایش کلید")
                     }
                 },
                 modifier = Modifier.fillMaxWidth()
             )
             Spacer(Modifier.height(8.dp))
-            Row(
-                modifier = Modifier.horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
+            Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 presetModels.forEach { (id, desc) ->
-                    FilterChip(
-                        selected = model == id,
-                        onClick = { onModelChange(id) },
-                        label = { Text("$id ($desc)") }
-                    )
+                    FilterChip(selected = model == id, onClick = { onModelChange(id) }, label = { Text("$id ($desc)") })
                 }
             }
             Spacer(Modifier.height(6.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                OutlinedTextField(
-                    value = model,
-                    onValueChange = onModelChange,
-                    label = { Text("نام مدل") },
-                    singleLine = true,
-                    modifier = Modifier.weight(1f)
-                )
-                OutlinedButton(
-                    onClick = onTestClick,
-                    enabled = !isTesting
-                ) {
-                    Text("تست")
-                }
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(value = model, onValueChange = onModelChange, label = { Text("نام مدل") }, singleLine = true, modifier = Modifier.weight(1f))
+                OutlinedButton(onClick = onTestClick, enabled = !isTesting) { Text("تست") }
             }
         }
     }
