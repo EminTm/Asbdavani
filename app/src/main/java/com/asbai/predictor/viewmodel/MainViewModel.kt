@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.asbai.predictor.data.SettingsRepository
 import com.asbai.predictor.model.DiscoveredLink
+import com.asbai.predictor.model.PreScoredHorse
 import com.asbai.predictor.model.PredictionReport
 import com.asbai.predictor.model.RiskProfile
 import com.asbai.predictor.model.SavedPrediction
@@ -16,11 +17,14 @@ import com.asbai.predictor.network.GeminiAnalyzer
 import com.asbai.predictor.network.OpenAiCompatAnalyzer
 import com.asbai.predictor.util.AppUpdateInfo
 import com.asbai.predictor.util.AppUpdater
+import com.asbai.predictor.util.PreScorer
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -41,6 +45,7 @@ data class MainUiState(
     val newsNotesInput: String = "",
     val useWebSearch: Boolean = true,
     val discoveredLinks: List<DiscoveredLink> = emptyList(),
+    val livePreScores: List<PreScoredHorse> = emptyList(),
     val isFetchingSite: Boolean = false,
     val isAnalyzing: Boolean = false,
     val isTestingKey: Boolean = false,
@@ -141,29 +146,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             AppUpdater.downloadAndInstall(
                 context = appContext,
                 downloadUrl = update.downloadUrl,
-                onProgress = { pct ->
-                    _uiState.update { it.copy(updateDownloadProgress = pct) }
-                }
+                onProgress = { pct -> _uiState.update { it.copy(updateDownloadProgress = pct) } }
             ).fold(
                 onSuccess = { started ->
                     _uiState.update {
                         it.copy(
                             isDownloadingUpdate = false,
-                            statusMessage = if (started) {
-                                "فایل آماده شد؛ روی «به‌روزرسانی» بزنید."
-                            } else {
-                                "ابتدا مجوز «نصب از این منبع» را فعال کنید و دوباره دکمه نصب را بزنید."
-                            }
+                            statusMessage = if (started) "فایل آماده شد؛ روی «به‌روزرسانی» بزنید." else "مجوز نصب از این منبع را فعال کنید."
                         )
                     }
                 },
                 onFailure = { err ->
                     _uiState.update {
-                        it.copy(
-                            isDownloadingUpdate = false,
-                            errorMessage = err.message ?: "خطا در دانلود یا نصب آپدیت",
-                            statusMessage = null
-                        )
+                        it.copy(isDownloadingUpdate = false, errorMessage = err.message ?: "خطای نصب آپدیت", statusMessage = null)
                     }
                 }
             )
@@ -183,7 +178,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun updateRaceDataInput(text: String) {
-        _uiState.update { it.copy(raceDataInput = text) }
+        val pre = PreScorer.analyze(text)
+        _uiState.update { it.copy(raceDataInput = text, livePreScores = pre.horses) }
     }
 
     fun updateNewsNotes(text: String) {
@@ -220,6 +216,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             scraper.fetchPage(targetUrl).fold(
                 onSuccess = { page ->
+                    val pre = withContext(Dispatchers.Default) { PreScorer.analyze(page.extractedText) }
                     _uiState.update {
                         it.copy(
                             isFetchingSite = false,
@@ -227,22 +224,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             pageTitle = page.title,
                             raceDataInput = page.extractedText,
                             discoveredLinks = page.links,
+                            livePreScores = pre.horses,
                             needsWebViewHint = page.likelyNeedsWebView,
                             statusMessage = if (page.likelyNeedsWebView) {
-                                "داده‌های این صفحه با جاوااسکریپت لود می‌شوند؛ از تب «سایت زنده» صفحه دور را باز کرده و استخراج کنید."
+                                "این صفحه با جاوااسکریپت لود می‌شود؛ از تب «سایت زنده» بازش کنید و «استخراج و پیش‌بینی» را بزنید."
                             } else {
-                                "اطلاعات صفحه دریافت شد (${page.tableCount} جدول و ${page.links.size} لینک)."
+                                "دریافت شد (${page.tableCount} جدول، پیش‌امتیاز برای ${pre.horses.size} اسب)."
                             }
                         )
                     }
                 },
                 onFailure = { err ->
                     _uiState.update {
-                        it.copy(
-                            isFetchingSite = false,
-                            errorMessage = err.message ?: "خطا در ارتباط با سایت",
-                            statusMessage = null
-                        )
+                        it.copy(isFetchingSite = false, errorMessage = err.message ?: "خطا در ارتباط با سایت", statusMessage = null)
                     }
                 }
             )
@@ -250,15 +244,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun onWebViewExtracted(title: String, url: String, extractedText: String) {
+        val pre = PreScorer.analyze(extractedText)
         _uiState.update {
             it.copy(
                 selectedTab = AppTab.PREDICT,
                 urlInput = url,
-                pageTitle = title.ifBlank { "صفحه زنده سایت اسبدوانی" },
+                pageTitle = title.ifBlank { "صفحه زنده مسابقات" },
                 raceDataInput = extractedText,
+                livePreScores = pre.horses,
                 needsWebViewHint = false,
                 errorMessage = null,
-                statusMessage = "اطلاعات صفحه زنده استخراج شد!"
+                statusMessage = "اطلاعات استخراج شد (پیش‌امتیاز ریاضی برای ${pre.horses.size} اسب)!"
             )
         }
         val state = _uiState.value
@@ -267,7 +263,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             analyzeCurrentRace()
         } else if (!hasAnyKey) {
             _uiState.update {
-                it.copy(errorMessage = "اطلاعات استخراج شد؛ برای شروع تحلیل حداقل یک کلید هوش مصنوعی در تنظیمات وارد کنید.")
+                it.copy(errorMessage = "اطلاعات استخراج شد؛ حداقل یک کلید هوش مصنوعی در تنظیمات وارد کنید.")
             }
         }
     }
@@ -282,27 +278,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         if (activeMembers.isEmpty()) {
             _uiState.update {
-                it.copy(
-                    errorMessage = "ابتدا حداقل یک کلید هوش مصنوعی در تب تنظیمات ثبت کنید.",
-                    selectedTab = AppTab.SETTINGS
-                )
+                it.copy(errorMessage = "ابتدا حداقل یک کلید هوش مصنوعی ثبت کنید.", selectedTab = AppTab.SETTINGS)
             }
             return
         }
         if (state.raceDataInput.isBlank()) {
-            _uiState.update {
-                it.copy(errorMessage = "ابتدا اطلاعات مسابقه را از سایت دریافت یا وارد کنید.")
-            }
+            _uiState.update { it.copy(errorMessage = "ابتدا اطلاعات مسابقه را دریافت یا وارد کنید.") }
             return
         }
 
         viewModelScope.launch {
+            val pre = withContext(Dispatchers.Default) { PreScorer.analyze(state.raceDataInput) }
             _uiState.update {
                 it.copy(
                     isAnalyzing = true,
+                    livePreScores = pre.horses,
                     errorMessage = null,
-                    statusMessage = "شورای هوش مصنوعی (${activeMembers.joinToString(" + ")}) همزمان در حال تحلیل و مقایسه است..."
+                    statusMessage = "شورای (${activeMembers.joinToString(" + ")}) با کمک پیش‌امتیاز ریاضی در حال تحلیل است..."
                 )
+            }
+
+            val enrichedData = if (pre.promptBlock.isNotBlank()) {
+                "${pre.promptBlock}\n\n${state.raceDataInput}"
+            } else {
+                state.raceDataInput
             }
 
             val config = CouncilConfig(
@@ -319,11 +318,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 config = config,
                 riskProfile = state.riskProfile,
                 raceTitle = state.pageTitle,
-                rawRaceData = state.raceDataInput,
+                rawRaceData = enrichedData,
                 userNewsNotes = state.newsNotesInput,
                 useWebSearch = state.useWebSearch
             ).fold(
                 onSuccess = { output ->
+                    val finalReport = output.report.copy(preScores = pre.horses)
                     val timeStr = SimpleDateFormat("yyyy/MM/dd - HH:mm", Locale.US)
                         .format(Date(System.currentTimeMillis()))
                     val saved = SavedPrediction(
@@ -331,7 +331,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         timestamp = timeStr,
                         sourceUrl = state.urlInput,
                         rawExcerpt = state.raceDataInput.take(300),
-                        report = output.report
+                        report = finalReport
                     )
                     repo.addHistory(saved)
                     val warnNote = if (output.memberWarnings.isNotEmpty()) {
@@ -340,19 +340,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     _uiState.update {
                         it.copy(
                             isAnalyzing = false,
-                            currentReport = output.report,
+                            currentReport = finalReport,
                             history = repo.getHistory(),
-                            statusMessage = "تحلیل شورای هوش مصنوعی آماده شد (${output.report.memberOpinions.size} مدل فعال)!$warnNote"
+                            statusMessage = "تحلیل آماده شد (${finalReport.memberOpinions.size} مدل فعال)!$warnNote"
                         )
                     }
                 },
                 onFailure = { err ->
                     _uiState.update {
-                        it.copy(
-                            isAnalyzing = false,
-                            errorMessage = err.message ?: "خطا در تحلیل شورا",
-                            statusMessage = null
-                        )
+                        it.copy(isAnalyzing = false, errorMessage = err.message ?: "خطا در تحلیل شورا", statusMessage = null)
                     }
                 }
             )
@@ -388,7 +384,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 thirdApiKey = repo.getThirdApiKey(),
                 thirdModel = repo.getThirdModel(),
                 riskProfile = repo.getRiskProfile(),
-                statusMessage = "تنظیمات شورای هوش مصنوعی ذخیره شد.",
+                statusMessage = "تنظیمات ذخیره شد.",
                 errorMessage = null
             )
         }
@@ -396,9 +392,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun testGeminiKey(apiKey: String, model: String) {
         viewModelScope.launch {
-            _uiState.update {
-                it.copy(isTestingKey = true, errorMessage = null, statusMessage = "در حال تست Gemini...")
-            }
+            _uiState.update { it.copy(isTestingKey = true, errorMessage = null, statusMessage = "در حال تست Gemini...") }
             geminiAnalyzer.testConnection(apiKey, model).fold(
                 onSuccess = { msg ->
                     repo.saveApiKey(apiKey)
@@ -418,9 +412,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun testGroqKey(apiKey: String, model: String) {
         viewModelScope.launch {
-            _uiState.update {
-                it.copy(isTestingKey = true, errorMessage = null, statusMessage = "در حال تست Groq...")
-            }
+            _uiState.update { it.copy(isTestingKey = true, errorMessage = null, statusMessage = "در حال تست Groq...") }
             openAiCompatAnalyzer.testConnection(
                 providerName = "Groq",
                 endpointUrl = CouncilAnalyzer.GROQ_ENDPOINT,
@@ -445,9 +437,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun testThirdKey(provider: ThirdProvider, apiKey: String, model: String) {
         viewModelScope.launch {
-            _uiState.update {
-                it.copy(isTestingKey = true, errorMessage = null, statusMessage = "در حال تست ${provider.shortName}...")
-            }
+            _uiState.update { it.copy(isTestingKey = true, errorMessage = null, statusMessage = "در حال تست ${provider.shortName}...") }
             val headers = if (provider == ThirdProvider.OPENROUTER) {
                 mapOf("HTTP-Referer" to "https://asbdavani.app", "X-Title" to "AsbDavaniAI")
             } else {
@@ -487,6 +477,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update {
             it.copy(
                 currentReport = item.report,
+                livePreScores = item.report.preScores,
                 urlInput = item.sourceUrl,
                 selectedTab = AppTab.PREDICT,
                 statusMessage = "گزارش تاریخچه (${item.timestamp}) بارگذاری شد."
@@ -496,8 +487,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun deleteHistoryItem(id: String) {
         repo.deleteHistory(id)
-        _uiState.update {
-            it.copy(history = repo.getHistory(), statusMessage = "از تاریخچه حذف شد.")
-        }
+        _uiState.update { it.copy(history = repo.getHistory(), statusMessage = "از تاریخچه حذف شد.") }
     }
 }
