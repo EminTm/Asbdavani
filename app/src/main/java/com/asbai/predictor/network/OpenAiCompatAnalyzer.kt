@@ -15,37 +15,28 @@ import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
 import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import java.util.concurrent.TimeUnit
 
 object RacePromptBuilder {
 
     fun buildSystemPrompt(riskProfile: RiskProfile): String = """
-        تو یک تحلیلگر حرفه‌ای مسابقات اسبدوانی ایران (سایت asbdavani.app) هستی.
-        تمامی معیارهای فنی کورس‌های ایران (گنبدکاووس، آق‌قلا، بندر ترکمن، یزد، مشهد، نوروزآباد و...) را می‌شناسی:
-        - عملکرد اسب به فرمت مثل 2-3-1/10 یعنی: اول-دوم-سوم / تعداد کل استارت‌ها.
-        - ریتینگ (Rating)، کلاس کورس و نژاد (ترکمن، تروبرد، دوخون، عرب)، سن و جنسیت.
-        - وزن حمل‌شده (کیلوگرم) و اثر آن در مسافت‌های کوتاه و بلند.
-        - فاصله زمانی از آخرین کورس، چابکسوار، مربی، مالک و دپار.
+        تو یک تحلیلگر حرفه‌ای مسابقات اسبدوانی (ایران asbdavani.app، ترکیه TJK و بین‌المللی) هستی.
+        معیارهای فنی کورس‌ها را می‌شناسی: عملکرد (2-3-1/10 یعنی اول-دوم-سوم/تعداد کل استارت‌ها)، ریتینگ (IOR/HP)، وزن حمل‌شده، مسافت، فاصله از آخرین کورس، چابکسوار، مربی و دپار.
+        اگر بخش «پیش‌امتیازدهی ریاضی خودکار» در داده‌ها آمده، از آن به عنوان مبنای دقیق آماری استفاده کن.
         استراتژی کاربر: ${riskProfile.instruction}
 
         بخش ویژه «رادار ناهنجاری‌ها و تاکتیک تیمی» (anomalyAlerts):
-        به عنوان تحلیلگر داده‌محور بررسی کن (بدون قضاوت قطعی درباره تبانی مخفی، فقط تحلیل الگوهای واقعی قابل مشاهده):
-        1) آیا یک مربی یا مالک همزمان ۲ یا چند اسب در این دور دارد؟ (احتمال تاکتیک تیمی یا اسب سرعتی کمکی).
-        2) آیا جابجایی غیرعادی چابکسوار دیده می‌شود؟
-        3) آیا اسبی با ریتینگ بالا اخیراً نتایج ضعیف داشته و الان با تغییر وزن/مسافت/چابکسوار برگشته؟
-        4) اگر نکته یا خبری در اخبار زنده یا یادداشت کاربر آمده، اثر آن را تحلیل کن.
+        بررسی کن: ۱) چند اسب هم‌مربی یا هم‌مالک در یک دور ۲) جابجایی غیرعادی چابکسوار ۳) افت/بازگشت مشکوک ریتینگ ۴) اثر اخبار/شرایط پیست.
 
-        خروجی را دقیقاً و فقط به صورت یک JSON معتبر (بدون هیچ متن اضافه قبل یا بعد از JSON) مطابق ساختار زیر برگردان:
+        خروجی را دقیقاً و فقط به صورت یک JSON معتبر مطابق ساختار زیر برگردان:
         {
           "raceSummary": "خلاصه مشخصات دور، مسافت، نژاد و پیست",
-          "trackAndClassNote": "تحلیل شرایط مسافت، کلاس و سطح رقابت اسب‌های حاضر",
+          "trackAndClassNote": "تحلیل شرایط مسافت، کلاس و سطح رقابت",
           "confidenceLevel": "بالا یا متوسط یا پایین",
           "confidencePercent": 72,
           "newsAndContextSummary": "خلاصه اخبار یافت‌شده و نکات کاربر",
-          "tacticalScenario": "پیش‌بینی روند تاکتیکی کورس از استارت تا خط پایان",
+          "tacticalScenario": "پیش‌بینی روند تاکتیکی کورس",
           "topThree": [
             { "rank": 1, "number": "شماره", "horseName": "نام اسب", "winProbability": 34, "reason": "دلیل فنی انتخاب اول" },
             { "rank": 2, "number": "شماره", "horseName": "نام اسب", "winProbability": 24, "reason": "دلیل فنی انتخاب دوم" },
@@ -61,7 +52,7 @@ object RacePromptBuilder {
             {
               "title": "عنوان هشدار یا الگوی تاکتیکی",
               "severity": "هشدار بالا یا نکته تاکتیکی یا عادی",
-              "description": "توضیح دقیق بر اساس اسب‌ها، مربی‌ها یا چابکسوارهای حاضر"
+              "description": "توضیح دقیق بر اساس داده‌ها"
             }
           ],
           "horseAnalyses": [
@@ -76,7 +67,7 @@ object RacePromptBuilder {
               "verdict": "جمع‌بندی کوتاه"
             }
           ],
-          "disclaimer": "این پیش‌بینی یک تحلیل آماری و خبری توسط هوش مصنوعی است؛ تشخیص ناهنجاری‌ها صرفاً بررسی الگوهای مسابقه‌ای است و به معنای اثبات تخلف نیست."
+          "disclaimer": "این پیش‌بینی یک تحلیل آماری و خبری توسط هوش مصنوعی است و تضمینی برای نتیجه قطعی مسابقه نیست."
         }
         مجموع winProbability اسب‌ها در horseAnalyses باید حدود 100 باشد.
     """.trimIndent()
@@ -97,7 +88,7 @@ object RacePromptBuilder {
         if (liveNewsContext.isNotBlank()) {
             appendLine()
             appendLine("--- اخبار و سوابق یافت‌شده از وب ---")
-            appendLine(liveNewsContext.trim().take(3500))
+            appendLine(liveNewsContext.trim().take(3000))
         }
         appendLine()
         appendLine("--- داده‌های جدول و مشخصات مسابقه ---")
@@ -125,11 +116,7 @@ object RacePromptBuilder {
 
 class OpenAiCompatAnalyzer {
 
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(20, TimeUnit.SECONDS)
-        .writeTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(90, TimeUnit.SECONDS)
-        .build()
+    private val client = HttpClientProvider.sharedClient
 
     private val json = Json {
         ignoreUnknownKeys = true
@@ -149,12 +136,12 @@ class OpenAiCompatAnalyzer {
             val cleanModel = model.trim()
             if (cleanKey.isBlank()) error("لطفاً ابتدا کلید API مربوط به $providerName را وارد کنید.")
             val isGroqGptOss = "groq.com" in endpointUrl && "gpt-oss" in cleanModel.lowercase()
+            val isGroqQwen = "groq.com" in endpointUrl && "qwen" in cleanModel.lowercase()
             val payload = buildJsonObject {
                 put("model", cleanModel)
                 put("max_tokens", 512)
-                if (isGroqGptOss) {
-                    put("reasoning_effort", "low")
-                }
+                if (isGroqGptOss) put("reasoning_effort", "low")
+                if (isGroqQwen) put("reasoning_effort", "none")
                 putJsonArray("messages") {
                     addJsonObject {
                         put("role", "user")
@@ -162,13 +149,7 @@ class OpenAiCompatAnalyzer {
                     }
                 }
             }
-            val reply = executeChat(
-                providerName = providerName,
-                endpointUrl = endpointUrl,
-                apiKey = cleanKey,
-                jsonBody = payload.toString(),
-                extraHeaders = extraHeaders
-            )
+            val reply = executeChat(providerName, endpointUrl, cleanKey, payload.toString(), extraHeaders)
             "اتصال $providerName با مدل $cleanModel برقرار شد (${reply.trim().take(20)})"
         }
     }
@@ -201,30 +182,16 @@ class OpenAiCompatAnalyzer {
             )
 
             try {
-                val payload = buildPayload(
-                    endpointUrl = endpointUrl,
-                    model = model.trim(),
-                    systemPrompt = systemPrompt,
-                    userPrompt = userPrompt,
-                    forceJsonMode = true
-                )
+                val payload = buildPayload(endpointUrl, model.trim(), systemPrompt, userPrompt, true)
                 val reply = executeChat(providerName, endpointUrl, cleanKey, payload, extraHeaders)
-                val pureJson = RacePromptBuilder.extractPureJson(reply)
-                json.decodeFromString<PredictionReport>(pureJson)
+                json.decodeFromString<PredictionReport>(RacePromptBuilder.extractPureJson(reply))
             } catch (e: Exception) {
                 val msg = e.message.orEmpty()
                 val nonRetryable = "401" in msg || "402" in msg || "403" in msg || "429" in msg
                 if (!nonRetryable) {
-                    val fallbackPayload = buildPayload(
-                        endpointUrl = endpointUrl,
-                        model = model.trim(),
-                        systemPrompt = systemPrompt,
-                        userPrompt = userPrompt,
-                        forceJsonMode = false
-                    )
+                    val fallbackPayload = buildPayload(endpointUrl, model.trim(), systemPrompt, userPrompt, false)
                     val reply2 = executeChat(providerName, endpointUrl, cleanKey, fallbackPayload, extraHeaders)
-                    val pureJson2 = RacePromptBuilder.extractPureJson(reply2)
-                    json.decodeFromString<PredictionReport>(pureJson2)
+                    json.decodeFromString<PredictionReport>(RacePromptBuilder.extractPureJson(reply2))
                 } else {
                     throw e
                 }
@@ -241,27 +208,21 @@ class OpenAiCompatAnalyzer {
     ): String {
         val isGroq = "groq.com" in endpointUrl
         val isGroqGptOss = isGroq && "gpt-oss" in model.lowercase()
+        val isGroqQwen = isGroq && "qwen" in model.lowercase()
         return buildJsonObject {
             put("model", model)
             put("temperature", 0.3)
             put("max_tokens", if (isGroq) 3200 else 6000)
-            if (isGroqGptOss) {
-                put("reasoning_effort", "low")
-            }
+            if (isGroqGptOss) put("reasoning_effort", "low")
+            if (isGroqQwen) put("reasoning_effort", "none")
             if (forceJsonMode) {
                 putJsonObject("response_format") {
                     put("type", "json_object")
                 }
             }
             putJsonArray("messages") {
-                addJsonObject {
-                    put("role", "system")
-                    put("content", systemPrompt)
-                }
-                addJsonObject {
-                    put("role", "user")
-                    put("content", userPrompt)
-                }
+                addJsonObject { put("role", "system"); put("content", systemPrompt) }
+                addJsonObject { put("role", "user"); put("content", userPrompt) }
             }
         }.toString()
     }
@@ -296,7 +257,7 @@ class OpenAiCompatAnalyzer {
 
                 val friendly = when (response.code) {
                     401, 403 -> "کلید $providerName نامعتبر است یا دسترسی ندارد (${response.code}): ${apiMsg ?: ""}"
-                    402 -> "سهمیه/اعتبار $providerName کافی نیست (مدل :free انتخاب کنید)."
+                    402 -> "سهمیه/اعتبار $providerName کافی نیست."
                     404 -> "مدل انتخابی در $providerName یافت نشد (404): ${apiMsg ?: ""}"
                     429 -> "سهمیه درخواست $providerName موقتاً پر شده است (429): ${apiMsg ?: ""}"
                     else -> "خطای $providerName (کد ${response.code}): ${apiMsg ?: bodyString.take(150)}"
@@ -305,8 +266,7 @@ class OpenAiCompatAnalyzer {
             }
 
             val root = json.parseToJsonElement(bodyString).jsonObject
-            val choices = root["choices"]?.jsonArray
-                ?: error("پاسخی از $providerName دریافت نشد.")
+            val choices = root["choices"]?.jsonArray ?: error("پاسخی از $providerName دریافت نشد.")
             val message = choices.firstOrNull()?.jsonObject?.get("message")?.jsonObject
                 ?: error("ساختار پیام $providerName خالی بود.")
 
@@ -315,7 +275,7 @@ class OpenAiCompatAnalyzer {
             }.getOrNull().orEmpty().trim()
 
             if (content.isBlank()) {
-                error("متن خروجی $providerName خالی بود (مدل استدلالی تمام توکن را صرف تفکر کرد یا پاسخ null برگرداند).")
+                error("متن خروجی $providerName خالی بود.")
             }
             return content
         }
