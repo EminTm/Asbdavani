@@ -17,6 +17,12 @@ class SettingsRepository(context: Context) {
         encodeDefaults = true
     }
 
+    // ۱. Gemini
+    fun isGeminiEnabled(): Boolean = prefs.getBoolean(KEY_GEMINI_ENABLED, true)
+    fun setGeminiEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_GEMINI_ENABLED, enabled).apply()
+    }
+
     fun getApiKey(): String = prefs.getString(KEY_API_KEY, "")?.trim().orEmpty()
     fun saveApiKey(apiKey: String) {
         prefs.edit().putString(KEY_API_KEY, apiKey.trim()).apply()
@@ -28,6 +34,12 @@ class SettingsRepository(context: Context) {
         prefs.edit().putString(KEY_MODEL, model.trim().ifEmpty { DEFAULT_MODEL }).apply()
     }
 
+    // ۲. Groq
+    fun isGroqEnabled(): Boolean = prefs.getBoolean(KEY_GROQ_ENABLED, true)
+    fun setGroqEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_GROQ_ENABLED, enabled).apply()
+    }
+
     fun getGroqApiKey(): String = prefs.getString(KEY_GROQ_API_KEY, "")?.trim().orEmpty()
     fun saveGroqApiKey(apiKey: String) {
         prefs.edit().putString(KEY_GROQ_API_KEY, apiKey.trim()).apply()
@@ -37,6 +49,12 @@ class SettingsRepository(context: Context) {
         .ifEmpty { DEFAULT_GROQ_MODEL }
     fun saveGroqModel(model: String) {
         prefs.edit().putString(KEY_GROQ_MODEL, model.trim().ifEmpty { DEFAULT_GROQ_MODEL }).apply()
+    }
+
+    // ۳. عضو سوم (Cohere / Z.ai / OpenRouter)
+    fun isThirdEnabled(): Boolean = prefs.getBoolean(KEY_THIRD_ENABLED, true)
+    fun setThirdEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_THIRD_ENABLED, enabled).apply()
     }
 
     fun getThirdProvider(): ThirdProvider {
@@ -62,6 +80,28 @@ class SettingsRepository(context: Context) {
     fun saveThirdModel(model: String) {
         val fallback = getThirdProvider().defaultModel
         prefs.edit().putString(KEY_THIRD_MODEL, model.trim().ifEmpty { fallback }).apply()
+    }
+
+    // ۴. Cloudflare Workers AI
+    fun isCfEnabled(): Boolean = prefs.getBoolean(KEY_CF_ENABLED, true)
+    fun setCfEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_CF_ENABLED, enabled).apply()
+    }
+
+    fun getCfAccountId(): String = prefs.getString(KEY_CF_ACCOUNT_ID, "")?.trim().orEmpty()
+    fun saveCfAccountId(accountId: String) {
+        prefs.edit().putString(KEY_CF_ACCOUNT_ID, accountId.trim()).apply()
+    }
+
+    fun getCfApiToken(): String = prefs.getString(KEY_CF_API_TOKEN, "")?.trim().orEmpty()
+    fun saveCfApiToken(token: String) {
+        prefs.edit().putString(KEY_CF_API_TOKEN, token.trim()).apply()
+    }
+
+    fun getCfModel(): String = prefs.getString(KEY_CF_MODEL, DEFAULT_CF_MODEL)?.trim().orEmpty()
+        .ifEmpty { DEFAULT_CF_MODEL }
+    fun saveCfModel(model: String) {
+        prefs.edit().putString(KEY_CF_MODEL, model.trim().ifEmpty { DEFAULT_CF_MODEL }).apply()
     }
 
     fun getRiskProfile(): RiskProfile {
@@ -91,16 +131,24 @@ class SettingsRepository(context: Context) {
     }
 
     companion object {
-        const val DEFAULT_MODEL = "gemini-4-hydrogen"
+        const val DEFAULT_MODEL = "gemini-3.5-flash-lite"
         const val DEFAULT_GROQ_MODEL = "qwen/qwen3.8-27b"
+        const val DEFAULT_CF_MODEL = "@cf/deepseek-ai/deepseek-v4.1-flash-1017"
 
+        private const val KEY_GEMINI_ENABLED = "gemini_enabled"
         private const val KEY_API_KEY = "gemini_api_key"
         private const val KEY_MODEL = "gemini_model"
+        private const val KEY_GROQ_ENABLED = "groq_enabled"
         private const val KEY_GROQ_API_KEY = "groq_api_key"
         private const val KEY_GROQ_MODEL = "groq_model"
+        private const val KEY_THIRD_ENABLED = "third_enabled"
         private const val KEY_THIRD_PROVIDER = "third_provider"
         private const val KEY_THIRD_API_KEY = "third_api_key"
         private const val KEY_THIRD_MODEL = "third_model"
+        private const val KEY_CF_ENABLED = "cf_enabled"
+        private const val KEY_CF_ACCOUNT_ID = "cf_account_id"
+        private const val KEY_CF_API_TOKEN = "cf_api_token"
+        private const val KEY_CF_MODEL = "cf_model"
         private const val KEY_RISK_PROFILE = "risk_profile"
         private const val KEY_HISTORY = "prediction_history"
     }
