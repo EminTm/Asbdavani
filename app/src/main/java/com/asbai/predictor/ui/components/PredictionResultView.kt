@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.dp
 import com.asbai.predictor.model.HorseAnalysis
 import com.asbai.predictor.model.PredictionReport
 import com.asbai.predictor.model.TopPick
+import java.util.Locale
 
 @Composable
 fun PredictionResultView(
@@ -61,6 +62,7 @@ fun PredictionResultView(
         }
 
         if (report.preScores.isNotEmpty()) {
+            val valuePicks = report.preScores.filter { (it.edgePercent ?: 0) >= 12 }
             ElevatedCard(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.elevatedCardColors(
@@ -76,14 +78,32 @@ fun PredictionResultView(
                         )
                         Spacer(Modifier.width(8.dp))
                         Text(
-                            text = "امتیازدهی ریاضی پایه (محاسبه آماری قبل از AI)",
+                            text = "مدل ریاضی Equintel (ضریب منصفانه + Value Edge)",
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Bold,
                             color = Color(0xFF1B5E20)
                         )
                     }
+
+                    if (valuePicks.isNotEmpty()) {
+                        Spacer(Modifier.height(6.dp))
+                        Surface(
+                            color = Color(0xFFDCEFD5),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text(
+                                text = "🔥 گزینه‌های با ارزش پنهان (Edge مثبت نسبت به AGF/بازار): " +
+                                    valuePicks.joinToString("، ") { "#${it.number} ${it.horseName} (+${it.edgePercent}٪)" },
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF145A1A),
+                                modifier = Modifier.padding(8.dp)
+                            )
+                        }
+                    }
+
                     Spacer(Modifier.height(8.dp))
-                    report.preScores.take(5).forEachIndexed { idx, h ->
+                    report.preScores.take(6).forEachIndexed { idx, h ->
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -92,10 +112,12 @@ fun PredictionResultView(
                             Text(
                                 text = "${idx + 1}. #${h.number} ${h.horseName}",
                                 style = MaterialTheme.typography.bodySmall,
-                                fontWeight = FontWeight.Bold
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.weight(1f)
                             )
+                            val oddsTxt = if (h.fairOdds > 0) " | ضریب ${String.format(Locale.US, "%.1f", h.fairOdds)}" else ""
                             Text(
-                                text = "امتیاز: ${h.mathScore}/100",
+                                text = "${h.mathWinProb}٪$oddsTxt",
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = Color(0xFF2E7D32)
@@ -108,7 +130,7 @@ fun PredictionResultView(
                                 color = Color(0xFF424242)
                             )
                         }
-                        if (idx < minOf(report.preScores.size, 5) - 1) {
+                        if (idx < minOf(report.preScores.size, 6) - 1) {
                             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
                         }
                     }
@@ -366,7 +388,7 @@ fun PredictionResultView(
                             )
                             Spacer(Modifier.width(6.dp))
                             Text(
-                                text = "اسب شگفتی‌ساز (ریسکی ارزشمند): #${dark.number} ${dark.horseName} (${dark.winProbability}٪)",
+                                text = "اسب شگفتی‌ساز (ارزش بالا): #${dark.number} ${dark.horseName} (${dark.winProbability}٪)",
                                 style = MaterialTheme.typography.titleSmall,
                                 fontWeight = FontWeight.Bold
                             )
@@ -478,7 +500,7 @@ private fun HorseAnalysisCard(horse: HorseAnalysis) {
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text("شانس برد: ${horse.winProbability}٪", style = MaterialTheme.typography.labelMedium)
-                Text("شانس سکو (۱-۳): ${horse.placeProbability}٪", style = MaterialTheme.typography.labelMedium)
+                Text("شانس سکو: ${horse.placeProbability}٪", style = MaterialTheme.typography.labelMedium)
             }
             Spacer(Modifier.height(4.dp))
             LinearProgressIndicator(
