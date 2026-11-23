@@ -1,6 +1,7 @@
 package com.asbai.predictor.ui.screens
 
 import android.annotation.SuppressLint
+import android.webkit.CookieManager
 import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -23,6 +24,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentPaste
@@ -47,6 +49,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -67,6 +70,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.material3.SuggestionChip
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -89,6 +93,12 @@ import com.asbai.predictor.viewmodel.AppTab
 import com.asbai.predictor.viewmodel.MainUiState
 import com.asbai.predictor.viewmodel.MainViewModel
 import org.json.JSONTokener
+
+private val QUICK_SITES = listOf(
+    "🇮🇷 اسبدوانی" to "https://asbdavani.app/racecards",
+    "🇹🇷 TJK ترکیه" to "https://www.tjk.org/TR/yarissever/Info/Page/GunlukYarisProgrami?QueryParameter_Tarih=20/11/2026&Era=today&1=1#",
+    "🇳🇱 Unibet" to "https://www.unibet.nl/betting/racing"
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -154,6 +164,7 @@ fun MainScreen(viewModel: MainViewModel) {
                 AppTab.PREDICT -> PredictTab(state = state, viewModel = viewModel)
                 AppTab.BROWSER -> LiveBrowserTab(
                     initialUrl = state.urlInput,
+                    onUrlChanged = { viewModel.updateUrlInput(it) },
                     onExtractAndPredict = { title, url, text ->
                         viewModel.onWebViewExtracted(title, url, text)
                     }
@@ -321,11 +332,25 @@ private fun PredictTab(state: MainUiState, viewModel: MainViewModel) {
         ElevatedCard(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(14.dp)) {
                 Text(
-                    text = "دریافت اطلاعات از سایت asbdavani.app",
+                    text = "انتخاب سایت مسابقات",
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold
                 )
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    QUICK_SITES.forEach { (label, siteUrl) ->
+                        SuggestionChip(
+                            onClick = { viewModel.updateUrlInput(siteUrl) },
+                            label = { Text(label) }
+                        )
+                    }
+                }
+                Spacer(Modifier.height(6.dp))
                 OutlinedTextField(
                     value = state.urlInput,
                     onValueChange = { viewModel.updateUrlInput(it) },
@@ -366,7 +391,7 @@ private fun PredictTab(state: MainUiState, viewModel: MainViewModel) {
                 if (state.needsWebViewHint) {
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        text = "نکته: اگر جدول اسب‌ها با جاوااسکریپت لود می‌شود، از دکمه «باز کردن در مرورگر» دور موردنظر را باز کنید و دکمه «تحلیل همین صفحه» را بزنید.",
+                        text = "نکته: برای Unibet و برخی صفحات TJK / اسبدوانی از دکمه «باز کردن در مرورگر» وارد شوید و دکمه «استخراج و پیش‌بینی همین صفحه» را بزنید.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.primary
                     )
@@ -451,6 +476,53 @@ private fun PredictTab(state: MainUiState, viewModel: MainViewModel) {
                         maxLines = 8,
                         modifier = Modifier.fillMaxWidth()
                     )
+                }
+            }
+        }
+
+        if (state.livePreScores.isNotEmpty() && state.currentReport == null) {
+            ElevatedCard(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.elevatedCardColors(
+                    containerColor = Color(0xFFF1F8E9)
+                )
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.BarChart, contentDescription = null, tint = Color(0xFF2E7D32))
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = "پیش‌امتیاز ریاضی فوری (قبل از AI)",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF1B5E20)
+                        )
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    state.livePreScores.take(5).forEachIndexed { idx, h ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "${idx + 1}. #${h.number} ${h.horseName}",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "${h.mathScore}/100",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = Color(0xFF2E7D32),
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        if (h.summary.isNotBlank()) {
+                            Text(text = h.summary, style = MaterialTheme.typography.labelSmall)
+                        }
+                        if (idx < minOf(state.livePreScores.size, 5) - 1) {
+                            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                        }
+                    }
                 }
             }
         }
@@ -587,23 +659,34 @@ private fun CouncilMemberBadge(name: String, active: Boolean) {
 @Composable
 private fun LiveBrowserTab(
     initialUrl: String,
+    onUrlChanged: (String) -> Unit,
     onExtractAndPredict: (title: String, url: String, extractedText: String) -> Unit
 ) {
     var webView by remember { mutableStateOf<WebView?>(null) }
     var currentUrl by remember {
-        mutableStateOf(
-            initialUrl.ifBlank { "https://asbdavani.app/racecards" }
-        )
+        mutableStateOf(initialUrl.ifBlank { "https://asbdavani.app/racecards" })
     }
-    var currentTitle by remember { mutableStateOf("سایت اسبدوانی") }
+    var urlBarText by remember { mutableStateOf(currentUrl) }
+    var currentTitle by remember { mutableStateOf("مرورگر مسابقات") }
     var progress by remember { mutableIntStateOf(0) }
+
+    fun navigateTo(raw: String) {
+        val target = raw.trim().let {
+            if (it.startsWith("http://") || it.startsWith("https://")) it else "https://$it"
+        }
+        currentUrl = target
+        urlBarText = target
+        onUrlChanged(target)
+        webView?.loadUrl(target)
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
+            // نوار آدرس و دکمه‌های کنترل
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                    .padding(horizontal = 6.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 IconButton(onClick = { if (webView?.canGoBack() == true) webView?.goBack() }) {
@@ -612,15 +695,34 @@ private fun LiveBrowserTab(
                 IconButton(onClick = { webView?.reload() }) {
                     Icon(Icons.Default.Refresh, contentDescription = "رفرش")
                 }
-                TextButton(onClick = { webView?.loadUrl("https://asbdavani.app/racecards") }) {
-                    Text("جدول مسابقات")
-                }
-                Spacer(Modifier.weight(1f))
-                Text(
-                    text = currentUrl.removePrefix("https://").take(26),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                OutlinedTextField(
+                    value = urlBarText,
+                    onValueChange = { urlBarText = it },
+                    singleLine = true,
+                    placeholder = { Text("آدرس سایت...") },
+                    modifier = Modifier.weight(1f)
                 )
+                Spacer(Modifier.width(4.dp))
+                TextButton(onClick = { navigateTo(urlBarText) }) {
+                    Text("برو", fontWeight = FontWeight.Bold)
+                }
+            }
+
+            // چیپ‌های دسترسی سریع به سایت‌های اسبدوانی + Unibet + TJK
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 8.dp, vertical = 2.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                QUICK_SITES.forEach { (label, siteUrl) ->
+                    FilterChip(
+                        selected = currentUrl.contains(siteUrl.removePrefix("https://").substringBefore("/")),
+                        onClick = { navigateTo(siteUrl) },
+                        label = { Text(label) }
+                    )
+                }
             }
 
             if (progress in 1..99) {
@@ -634,13 +736,21 @@ private fun LiveBrowserTab(
                 modifier = Modifier.fillMaxSize(),
                 factory = { ctx ->
                     WebView(ctx).apply {
+                        CookieManager.getInstance().setAcceptCookie(true)
+                        CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
                         settings.javaScriptEnabled = true
                         settings.domStorageEnabled = true
                         settings.loadWithOverviewMode = true
                         settings.useWideViewPort = true
+                        settings.userAgentString =
+                            "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36"
                         webViewClient = object : WebViewClient() {
                             override fun onPageFinished(view: WebView?, url: String?) {
-                                if (!url.isNullOrBlank()) currentUrl = url
+                                if (!url.isNullOrBlank()) {
+                                    currentUrl = url
+                                    urlBarText = url
+                                    onUrlChanged(url)
+                                }
                                 if (!view?.title.isNullOrBlank()) currentTitle = view?.title.orEmpty()
                             }
                         }
@@ -676,6 +786,14 @@ private fun LiveBrowserTab(
                                 if (cells.length > 0) parts.push(cells.join(" | "));
                             });
                         });
+                        var roleRows = document.querySelectorAll("[role='row'], [role='listitem']");
+                        if (tables.length === 0 && roleRows.length > 0) {
+                            parts.push("--- ردیف‌های صفحه ---");
+                            roleRows.forEach(function(r) {
+                                var txt = (r.innerText || "").replace(/\s+/g, " ").trim();
+                                if (txt.length > 3) parts.push(txt);
+                            });
+                        }
                         var bodyText = (document.body.innerText || "").replace(/\n{3,}/g, "\n\n").trim();
                         parts.push("--- متن کامل صفحه ---");
                         parts.push(bodyText);
