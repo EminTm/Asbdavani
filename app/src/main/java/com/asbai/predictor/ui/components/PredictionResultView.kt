@@ -12,6 +12,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Article
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.EmojiEvents
@@ -57,6 +58,62 @@ fun PredictionResultView(
             Text("تبدیل گزارش به PDF و ارسال", fontWeight = FontWeight.Bold)
             Spacer(Modifier.width(6.dp))
             Icon(Icons.Default.Share, contentDescription = null)
+        }
+
+        if (report.preScores.isNotEmpty()) {
+            ElevatedCard(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.elevatedCardColors(
+                    containerColor = Color(0xFFF1F8E9)
+                )
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.BarChart,
+                            contentDescription = null,
+                            tint = Color(0xFF2E7D32)
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = "امتیازدهی ریاضی پایه (محاسبه آماری قبل از AI)",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF1B5E20)
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    report.preScores.take(5).forEachIndexed { idx, h ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "${idx + 1}. #${h.number} ${h.horseName}",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "امتیاز: ${h.mathScore}/100",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF2E7D32)
+                            )
+                        }
+                        if (h.summary.isNotBlank()) {
+                            Text(
+                                text = h.summary,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color(0xFF424242)
+                            )
+                        }
+                        if (idx < minOf(report.preScores.size, 5) - 1) {
+                            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                        }
+                    }
+                }
+            }
         }
 
         if (report.consensusSummary.isNotBlank() || report.memberOpinions.isNotEmpty()) {
