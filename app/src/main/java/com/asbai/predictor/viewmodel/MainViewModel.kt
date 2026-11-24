@@ -4,20 +4,17 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.asbai.predictor.data.SettingsRepository
+import com.asbai.predictor.engine.MultiSiteParser
+import com.asbai.predictor.engine.QuantPredictor
 import com.asbai.predictor.model.DiscoveredLink
+import com.asbai.predictor.model.ModelWeights
 import com.asbai.predictor.model.PreScoredHorse
 import com.asbai.predictor.model.PredictionReport
 import com.asbai.predictor.model.RiskProfile
 import com.asbai.predictor.model.SavedPrediction
-import com.asbai.predictor.model.ThirdProvider
 import com.asbai.predictor.network.AsbdavaniScraper
-import com.asbai.predictor.network.CouncilAnalyzer
-import com.asbai.predictor.network.CouncilConfig
-import com.asbai.predictor.network.GeminiAnalyzer
-import com.asbai.predictor.network.OpenAiCompatAnalyzer
 import com.asbai.predictor.util.AppUpdateInfo
 import com.asbai.predictor.util.AppUpdater
-import com.asbai.predictor.util.PreScorer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -32,9 +29,9 @@ import java.util.UUID
 
 enum class AppTab(val title: String) {
     PREDICT("پیش‌بینی"),
-    BROWSER("سایت زنده"),
+    BROWSER("مرورگر سایت"),
     HISTORY("تاریخچه"),
-    SETTINGS("تنظیمات")
+    SETTINGS("کالیبراسیون")
 }
 
 data class MainUiState(
@@ -43,29 +40,15 @@ data class MainUiState(
     val pageTitle: String = "مسابقات اسبدوانی",
     val raceDataInput: String = "",
     val newsNotesInput: String = "",
-    val useWebSearch: Boolean = true,
     val discoveredLinks: List<DiscoveredLink> = emptyList(),
     val livePreScores: List<PreScoredHorse> = emptyList(),
     val isFetchingSite: Boolean = false,
     val isAnalyzing: Boolean = false,
-    val isTestingKey: Boolean = false,
     val needsWebViewHint: Boolean = false,
     val currentReport: PredictionReport? = null,
+    val currentPredictionId: String? = null,
     val history: List<SavedPrediction> = emptyList(),
-    val geminiEnabled: Boolean = true,
-    val apiKey: String = "",
-    val selectedModel: String = SettingsRepository.DEFAULT_MODEL,
-    val groqEnabled: Boolean = true,
-    val groqApiKey: String = "",
-    val groqModel: String = SettingsRepository.DEFAULT_GROQ_MODEL,
-    val thirdEnabled: Boolean = true,
-    val thirdProvider: ThirdProvider = ThirdProvider.COHERE,
-    val thirdApiKey: String = "",
-    val thirdModel: String = ThirdProvider.COHERE.defaultModel,
-    val cfEnabled: Boolean = true,
-    val cfAccountId: String = "",
-    val cfApiToken: String = "",
-    val cfModel: String = SettingsRepository.DEFAULT_CF_MODEL,
+    val weights: ModelWeights = ModelWeights(),
     val riskProfile: RiskProfile = RiskProfile.BALANCED,
     val currentVersionName: String = "1.0",
     val availableUpdate: AppUpdateInfo? = null,
@@ -81,26 +64,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val appContext = application.applicationContext
     private val repo = SettingsRepository(appContext)
     private val scraper = AsbdavaniScraper()
-    private val geminiAnalyzer = GeminiAnalyzer()
-    private val openAiCompatAnalyzer = OpenAiCompatAnalyzer()
-    private val councilAnalyzer = CouncilAnalyzer(geminiAnalyzer, openAiCompatAnalyzer)
 
     private val _uiState = MutableStateFlow(
         MainUiState(
-            geminiEnabled = repo.isGeminiEnabled(),
-            apiKey = repo.getApiKey(),
-            selectedModel = repo.getModel(),
-            groqEnabled = repo.isGroqEnabled(),
-            groqApiKey = repo.getGroqApiKey(),
-            groqModel = repo.getGroqModel(),
-            thirdEnabled = repo.isThirdEnabled(),
-            thirdProvider = repo.getThirdProvider(),
-            thirdApiKey = repo.getThirdApiKey(),
-            thirdModel = repo.getThirdModel(),
-            cfEnabled = repo.isCfEnabled(),
-            cfAccountId = repo.getCfAccountId(),
-            cfApiToken = repo.getCfApiToken(),
-            cfModel = repo.getCfModel(),
+            weights = repo.getWeights(),
             riskProfile = repo.getRiskProfile(),
             history = repo.getHistory(),
             currentVersionName = AppUpdater.getCurrentVersionName(appContext)
@@ -112,32 +79,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         checkForAppUpdate(silent = true)
     }
 
-    fun toggleGemini(enabled: Boolean) {
-        repo.setGeminiEnabled(enabled)
-        _uiState.update { it.copy(geminiEnabled = enabled) }
-    }
-
-    fun toggleGroq(enabled: Boolean) {
-        repo.setGroqEnabled(enabled)
-        _uiState.update { it.copy(groqEnabled = enabled) }
-    }
-
-    fun toggleThird(enabled: Boolean) {
-        repo.setThirdEnabled(enabled)
-        _uiState.update { it.copy(thirdEnabled = enabled) }
-    }
-
-    fun toggleCf(enabled: Boolean) {
-        repo.setCfEnabled(enabled)
-        _uiState.update { it.copy(cfEnabled = enabled) }
-    }
-
     fun checkForAppUpdate(silent: Boolean = false) {
         viewModelScope.launch {
             if (!silent) {
-                _uiState.update {
-                    it.copy(isCheckingUpdate = true, errorMessage = null, statusMessage = "در حال بررسی نسخه جدید...")
-                }
+                _uiState.update { it.copy(isCheckingUpdate = true, errorMessage = null, statusMessage = "در حال بررسی نسخه جدید...") }
             }
             AppUpdater.checkForUpdate(appContext).fold(
                 onSuccess = { info ->
@@ -169,19 +114,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun installAvailableUpdate() {
         val update = _uiState.value.availableUpdate ?: return
         viewModelScope.launch {
-            _uiState.update {
-                it.copy(
-                    isDownloadingUpdate = true,
-                    updateDownloadProgress = 0,
-                    errorMessage = null,
-                    statusMessage = "در حال دانلود نسخه ${update.versionName}..."
-                )
-            }
-            AppUpdater.downloadAndInstall(
-                context = appContext,
-                downloadUrl = update.downloadUrl,
-                onProgress = { pct -> _uiState.update { it.copy(updateDownloadProgress = pct) } }
-            ).fold(
+            _uiState.update { it.copy(isDownloadingUpdate = true, updateDownloadProgress = 0, errorMessage = null, statusMessage = "در حال دانلود...") }
+            AppUpdater.downloadAndInstall(appContext, update.downloadUrl) { pct ->
+                _uiState.update { it.copy(updateDownloadProgress = pct) }
+            }.fold(
                 onSuccess = { started ->
                     _uiState.update {
                         it.copy(
@@ -191,9 +127,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 },
                 onFailure = { err ->
-                    _uiState.update {
-                        it.copy(isDownloadingUpdate = false, errorMessage = err.message ?: "خطای نصب آپدیت", statusMessage = null)
-                    }
+                    _uiState.update { it.copy(isDownloadingUpdate = false, errorMessage = err.message ?: "خطای نصب آپدیت", statusMessage = null) }
                 }
             )
         }
@@ -212,16 +146,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun updateRaceDataInput(text: String) {
-        val pre = PreScorer.analyze(text)
-        _uiState.update { it.copy(raceDataInput = text, livePreScores = pre.horses) }
+        _uiState.update { it.copy(raceDataInput = text) }
+        viewModelScope.launch {
+            val preview = withContext(Dispatchers.Default) {
+                QuantPredictor.predict(
+                    rawText = text,
+                    pageTitle = _uiState.value.pageTitle,
+                    sourceUrl = _uiState.value.urlInput,
+                    weights = _uiState.value.weights,
+                    riskProfile = _uiState.value.riskProfile,
+                    newsNotes = ""
+                ).getOrNull()?.report?.preScores.orEmpty()
+            }
+            _uiState.update { it.copy(livePreScores = preview) }
+        }
     }
 
     fun updateNewsNotes(text: String) {
         _uiState.update { it.copy(newsNotesInput = text) }
-    }
-
-    fun toggleWebSearch(enabled: Boolean) {
-        _uiState.update { it.copy(useWebSearch = enabled) }
     }
 
     fun showStatus(msg: String) {
@@ -240,17 +182,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val targetUrl = (customUrl ?: _uiState.value.urlInput).trim()
         viewModelScope.launch {
             _uiState.update {
-                it.copy(
-                    isFetchingSite = true,
-                    urlInput = targetUrl,
-                    errorMessage = null,
-                    statusMessage = "در حال دریافت اطلاعات از سایت...",
-                    needsWebViewHint = false
-                )
+                it.copy(isFetchingSite = true, urlInput = targetUrl, errorMessage = null, statusMessage = "در حال دریافت صفحه...", needsWebViewHint = false)
             }
             scraper.fetchPage(targetUrl).fold(
                 onSuccess = { page ->
-                    val pre = withContext(Dispatchers.Default) { PreScorer.analyze(page.extractedText) }
+                    val parsedCount = withContext(Dispatchers.Default) {
+                        MultiSiteParser.parse(page.extractedText, page.title, page.url).horses.size
+                    }
                     _uiState.update {
                         it.copy(
                             isFetchingSite = false,
@@ -258,14 +196,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             pageTitle = page.title,
                             raceDataInput = page.extractedText,
                             discoveredLinks = page.links,
-                            livePreScores = pre.horses,
-                            needsWebViewHint = page.likelyNeedsWebView,
-                            statusMessage = if (page.likelyNeedsWebView) {
-                                "این صفحه با جاوااسکریپت لود می‌شود؛ از تب «سایت زنده» بازش کنید و «استخراج و پیش‌بینی» را بزنید."
+                            needsWebViewHint = page.likelyNeedsWebView || parsedCount < 2,
+                            statusMessage = if (parsedCount >= 2) {
+                                "اطلاعات دریافت شد ($parsedCount اسب شناسایی شد). دکمه «شروع تحلیل کمی» را بزنید!"
                             } else {
-                                "دریافت شد (${page.tableCount} جدول، پیش‌امتیاز برای ${pre.horses.size} اسب)."
+                                "جدول اسب‌ها با جاوااسکریپت لود می‌شود؛ از تب «مرورگر سایت» بازش کنید."
                             }
                         )
+                    }
+                    if (parsedCount >= 2) {
+                        analyzeCurrentRace()
                     }
                 },
                 onFailure = { err ->
@@ -278,308 +218,116 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun onWebViewExtracted(title: String, url: String, extractedText: String) {
-        val pre = PreScorer.analyze(extractedText)
         _uiState.update {
             it.copy(
                 selectedTab = AppTab.PREDICT,
                 urlInput = url,
                 pageTitle = title.ifBlank { "صفحه زنده مسابقات" },
                 raceDataInput = extractedText,
-                livePreScores = pre.horses,
                 needsWebViewHint = false,
-                errorMessage = null,
-                statusMessage = "اطلاعات استخراج شد (پیش‌امتیاز ریاضی برای ${pre.horses.size} اسب)!"
+                errorMessage = null
             )
         }
-        val state = _uiState.value
-        val hasActive = (state.geminiEnabled && state.apiKey.isNotBlank()) ||
-            (state.groqEnabled && state.groqApiKey.isNotBlank()) ||
-            (state.thirdEnabled && state.thirdApiKey.isNotBlank()) ||
-            (state.cfEnabled && state.cfAccountId.isNotBlank() && state.cfApiToken.isNotBlank())
-
-        if (hasActive && extractedText.isNotBlank()) {
-            analyzeCurrentRace()
-        } else if (!hasActive) {
-            _uiState.update {
-                it.copy(errorMessage = "اطلاعات استخراج شد؛ حداقل یک هوش مصنوعی را روشن و کلیدش را ثبت کنید.")
-            }
-        }
+        analyzeCurrentRace()
     }
 
     fun analyzeCurrentRace() {
         val state = _uiState.value
-        val activeMembers = buildList {
-            if (state.geminiEnabled && state.apiKey.isNotBlank()) add("Gemini")
-            if (state.groqEnabled && state.groqApiKey.isNotBlank()) add("Groq")
-            if (state.thirdEnabled && state.thirdApiKey.isNotBlank()) add(state.thirdProvider.shortName)
-            if (state.cfEnabled && state.cfAccountId.isNotBlank() && state.cfApiToken.isNotBlank()) add("Cloudflare")
-        }
-
-        if (activeMembers.isEmpty()) {
-            _uiState.update {
-                it.copy(errorMessage = "هیچ هوش مصنوعی‌ای روشن و متصل نیست! از تنظیمات کلید را وارد یا روشن کنید.", selectedTab = AppTab.SETTINGS)
-            }
-            return
-        }
         if (state.raceDataInput.isBlank()) {
             _uiState.update { it.copy(errorMessage = "ابتدا اطلاعات مسابقه را دریافت یا وارد کنید.") }
             return
         }
 
         viewModelScope.launch {
-            val pre = withContext(Dispatchers.Default) { PreScorer.analyze(state.raceDataInput) }
-            _uiState.update {
-                it.copy(
-                    isAnalyzing = true,
-                    livePreScores = pre.horses,
-                    errorMessage = null,
-                    statusMessage = "شورای (${activeMembers.joinToString(" + ")}) در حال تحلیل..."
+            _uiState.update { it.copy(isAnalyzing = true, errorMessage = null) }
+            val result = withContext(Dispatchers.Default) {
+                QuantPredictor.predict(
+                    rawText = state.raceDataInput,
+                    pageTitle = state.pageTitle,
+                    sourceUrl = state.urlInput,
+                    weights = state.weights,
+                    riskProfile = state.riskProfile,
+                    newsNotes = state.newsNotesInput
                 )
             }
-
-            val enrichedData = if (pre.promptBlock.isNotBlank()) {
-                "${pre.promptBlock}\n\n${state.raceDataInput}"
-            } else {
-                state.raceDataInput
-            }
-
-            val config = CouncilConfig(
-                geminiEnabled = state.geminiEnabled,
-                geminiKey = state.apiKey,
-                geminiModel = state.selectedModel,
-                groqEnabled = state.groqEnabled,
-                groqKey = state.groqApiKey,
-                groqModel = state.groqModel,
-                thirdEnabled = state.thirdEnabled,
-                thirdProvider = state.thirdProvider,
-                thirdKey = state.thirdApiKey,
-                thirdModel = state.thirdModel,
-                cfEnabled = state.cfEnabled,
-                cfAccountId = state.cfAccountId,
-                cfApiToken = state.cfApiToken,
-                cfModel = state.cfModel
-            )
-
-            councilAnalyzer.analyzeWithCouncil(
-                config = config,
-                riskProfile = state.riskProfile,
-                raceTitle = state.pageTitle,
-                rawRaceData = enrichedData,
-                userNewsNotes = state.newsNotesInput,
-                useWebSearch = state.useWebSearch
-            ).fold(
-                onSuccess = { output ->
-                    val finalReport = output.report.copy(preScores = pre.horses)
+            result.fold(
+                onSuccess = { out ->
                     val timeStr = SimpleDateFormat("yyyy/MM/dd - HH:mm", Locale.US)
                         .format(Date(System.currentTimeMillis()))
+                    val id = UUID.randomUUID().toString()
                     val saved = SavedPrediction(
-                        id = UUID.randomUUID().toString(),
+                        id = id,
                         timestamp = timeStr,
                         sourceUrl = state.urlInput,
                         rawExcerpt = state.raceDataInput.take(300),
-                        report = finalReport
+                        report = out.report,
+                        horseFeatures = out.featureVectors
                     )
                     repo.addHistory(saved)
-                    val warnNote = if (output.memberWarnings.isNotEmpty()) {
-                        "\n(هشدار برخی اعضا: ${output.memberWarnings.joinToString(" | ")})"
-                    } else ""
                     _uiState.update {
                         it.copy(
                             isAnalyzing = false,
-                            currentReport = finalReport,
+                            currentReport = out.report,
+                            currentPredictionId = id,
+                            livePreScores = out.report.preScores,
                             history = repo.getHistory(),
-                            statusMessage = "تحلیل آماده شد (${finalReport.memberOpinions.size} مدل فعال)!$warnNote"
+                            statusMessage = "تحلیل کمی با سرعت لحظه‌ای آماده شد!"
                         )
                     }
                 },
                 onFailure = { err ->
                     _uiState.update {
-                        it.copy(isAnalyzing = false, errorMessage = err.message ?: "خطا در تحلیل شورا", statusMessage = null)
+                        it.copy(isAnalyzing = false, errorMessage = err.message ?: "خطا در پردازش جدول", statusMessage = null)
                     }
                 }
             )
         }
     }
 
-    fun saveAllSettings(
-        geminiEnabled: Boolean,
-        geminiKey: String,
-        geminiModel: String,
-        groqEnabled: Boolean,
-        groqKey: String,
-        groqModel: String,
-        thirdEnabled: Boolean,
-        thirdProvider: ThirdProvider,
-        thirdKey: String,
-        thirdModel: String,
-        cfEnabled: Boolean,
-        cfAccountId: String,
-        cfApiToken: String,
-        cfModel: String,
-        riskProfile: RiskProfile
-    ) {
-        repo.setGeminiEnabled(geminiEnabled)
-        repo.saveApiKey(geminiKey)
-        repo.saveModel(geminiModel)
-        repo.setGroqEnabled(groqEnabled)
-        repo.saveGroqApiKey(groqKey)
-        repo.saveGroqModel(groqModel)
-        repo.setThirdEnabled(thirdEnabled)
-        repo.saveThirdProvider(thirdProvider)
-        repo.saveThirdApiKey(thirdKey)
-        repo.saveThirdModel(thirdModel)
-        repo.setCfEnabled(cfEnabled)
-        repo.saveCfAccountId(cfAccountId)
-        repo.saveCfApiToken(cfApiToken)
-        repo.saveCfModel(cfModel)
-        repo.saveRiskProfile(riskProfile)
+    fun recordActualWinner(winnerNumber: String, winnerName: String) {
+        val predId = _uiState.value.currentPredictionId ?: return
+        val saved = repo.getHistory().firstOrNull { it.id == predId } ?: return
+        if (saved.report.actualWinnerName.isNotBlank()) {
+            showStatus("برنده این مسابقه قبلاً ثبت شده و مدل آموزش دیده است.")
+            return
+        }
+
+        val winnerKey = "$winnerNumber:$winnerName"
+        val (newWeights, hitTxt) = QuantPredictor.calibrate(_uiState.value.weights, saved, winnerKey)
+        repo.saveWeights(newWeights)
+
+        val updatedReport = saved.report.copy(actualWinnerName = "#$winnerNumber $winnerName")
+        val updatedSaved = saved.copy(report = updatedReport)
+        repo.updateHistoryItem(updatedSaved)
 
         _uiState.update {
             it.copy(
-                geminiEnabled = repo.isGeminiEnabled(),
-                apiKey = repo.getApiKey(),
-                selectedModel = repo.getModel(),
-                groqEnabled = repo.isGroqEnabled(),
-                groqApiKey = repo.getGroqApiKey(),
-                groqModel = repo.getGroqModel(),
-                thirdEnabled = repo.isThirdEnabled(),
-                thirdProvider = repo.getThirdProvider(),
-                thirdApiKey = repo.getThirdApiKey(),
-                thirdModel = repo.getThirdModel(),
-                cfEnabled = repo.isCfEnabled(),
-                cfAccountId = repo.getCfAccountId(),
-                cfApiToken = repo.getCfApiToken(),
-                cfModel = repo.getCfModel(),
-                riskProfile = repo.getRiskProfile(),
-                statusMessage = "تمامی تنظیمات ذخیره شد.",
-                errorMessage = null
+                weights = newWeights,
+                currentReport = updatedReport,
+                history = repo.getHistory(),
+                statusMessage = "$hitTxt (دقت ۳تای اول: ${newWeights.top3Hits}/${newWeights.totalRacesLogged})"
             )
         }
     }
 
-    fun testGeminiKey(apiKey: String, model: String) {
-        viewModelScope.launch {
-            _uiState.update { it.copy(isTestingKey = true, errorMessage = null, statusMessage = "در حال تست Gemini...") }
-            geminiAnalyzer.testConnection(apiKey, model).fold(
-                onSuccess = { msg ->
-                    repo.saveApiKey(apiKey)
-                    repo.saveModel(model)
-                    _uiState.update {
-                        it.copy(isTestingKey = false, apiKey = repo.getApiKey(), selectedModel = repo.getModel(), statusMessage = msg)
-                    }
-                },
-                onFailure = { err ->
-                    _uiState.update {
-                        it.copy(isTestingKey = false, errorMessage = err.message ?: "تست Gemini ناموفق بود.", statusMessage = null)
-                    }
-                }
-            )
+    fun saveCalibration(weights: ModelWeights, riskProfile: RiskProfile) {
+        repo.saveWeights(weights)
+        repo.saveRiskProfile(riskProfile)
+        _uiState.update {
+            it.copy(weights = weights, riskProfile = riskProfile, statusMessage = "تنظیمات و وزن‌های مدل ذخیره شدند.", errorMessage = null)
         }
     }
 
-    fun testGroqKey(apiKey: String, model: String) {
-        viewModelScope.launch {
-            _uiState.update { it.copy(isTestingKey = true, errorMessage = null, statusMessage = "در حال تست Groq...") }
-            openAiCompatAnalyzer.testConnection(
-                providerName = "Groq",
-                endpointUrl = CouncilAnalyzer.GROQ_ENDPOINT,
-                apiKey = apiKey,
-                model = model
-            ).fold(
-                onSuccess = { msg ->
-                    repo.saveGroqApiKey(apiKey)
-                    repo.saveGroqModel(model)
-                    _uiState.update {
-                        it.copy(isTestingKey = false, groqApiKey = repo.getGroqApiKey(), groqModel = repo.getGroqModel(), statusMessage = msg)
-                    }
-                },
-                onFailure = { err ->
-                    _uiState.update {
-                        it.copy(isTestingKey = false, errorMessage = err.message ?: "تست Groq ناموفق بود.", statusMessage = null)
-                    }
-                }
-            )
-        }
-    }
-
-    fun testThirdKey(provider: ThirdProvider, apiKey: String, model: String) {
-        viewModelScope.launch {
-            _uiState.update { it.copy(isTestingKey = true, errorMessage = null, statusMessage = "در حال تست ${provider.shortName}...") }
-            val headers = if (provider == ThirdProvider.OPENROUTER) {
-                mapOf("HTTP-Referer" to "https://asbdavani.app", "X-Title" to "AsbDavaniAI")
-            } else {
-                emptyMap()
-            }
-            openAiCompatAnalyzer.testConnection(
-                providerName = provider.shortName,
-                endpointUrl = provider.endpointUrl,
-                apiKey = apiKey,
-                model = model,
-                extraHeaders = headers
-            ).fold(
-                onSuccess = { msg ->
-                    repo.saveThirdProvider(provider)
-                    repo.saveThirdApiKey(apiKey)
-                    repo.saveThirdModel(model)
-                    _uiState.update {
-                        it.copy(
-                            isTestingKey = false,
-                            thirdProvider = repo.getThirdProvider(),
-                            thirdApiKey = repo.getThirdApiKey(),
-                            thirdModel = repo.getThirdModel(),
-                            statusMessage = msg
-                        )
-                    }
-                },
-                onFailure = { err ->
-                    _uiState.update {
-                        it.copy(isTestingKey = false, errorMessage = err.message ?: "تست ${provider.shortName} ناموفق بود.", statusMessage = null)
-                    }
-                }
-            )
-        }
-    }
-
-    fun testCloudflareKey(accountId: String, apiToken: String, model: String) {
-        if (accountId.isBlank()) {
-            _uiState.update { it.copy(errorMessage = "لطفاً Account ID کلودفلر را وارد کنید.") }
-            return
-        }
-        viewModelScope.launch {
-            _uiState.update { it.copy(isTestingKey = true, errorMessage = null, statusMessage = "در حال تست Cloudflare AI...") }
-            openAiCompatAnalyzer.testConnection(
-                providerName = "Cloudflare",
-                endpointUrl = CouncilAnalyzer.cloudflareEndpoint(accountId),
-                apiKey = apiToken,
-                model = model
-            ).fold(
-                onSuccess = { msg ->
-                    repo.saveCfAccountId(accountId)
-                    repo.saveCfApiToken(apiToken)
-                    repo.saveCfModel(model)
-                    _uiState.update {
-                        it.copy(
-                            isTestingKey = false,
-                            cfAccountId = repo.getCfAccountId(),
-                            cfApiToken = repo.getCfApiToken(),
-                            cfModel = repo.getCfModel(),
-                            statusMessage = msg
-                        )
-                    }
-                },
-                onFailure = { err ->
-                    _uiState.update {
-                        it.copy(isTestingKey = false, errorMessage = err.message ?: "تست Cloudflare AI ناموفق بود.", statusMessage = null)
-                    }
-                }
-            )
-        }
+    fun resetWeights() {
+        val def = repo.resetWeights()
+        _uiState.update { it.copy(weights = def, statusMessage = "وزن‌ها به حالت استاندارد بازنشانی شدند.") }
     }
 
     fun openHistoryItem(item: SavedPrediction) {
         _uiState.update {
             it.copy(
                 currentReport = item.report,
+                currentPredictionId = item.id,
                 livePreScores = item.report.preScores,
                 urlInput = item.sourceUrl,
                 selectedTab = AppTab.PREDICT,
