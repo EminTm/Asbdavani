@@ -198,7 +198,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             discoveredLinks = page.links,
                             needsWebViewHint = page.likelyNeedsWebView || parsedCount < 2,
                             statusMessage = if (parsedCount >= 2) {
-                                "اطلاعات دریافت شد ($parsedCount اسب شناسایی شد). دکمه «شروع تحلیل کمی» را بزنید!"
+                                "اطلاعات دریافت شد ($parsedCount اسب شناسایی شد)."
                             } else {
                                 "جدول اسب‌ها با جاوااسکریپت لود می‌شود؛ از تب «مرورگر سایت» بازش کنید."
                             }
