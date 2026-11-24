@@ -55,7 +55,6 @@ object QuantPredictor {
 
         val rawFormScores = horses.map { computeRawFormScore(it) }
         val avgFormScore = rawFormScores.average()
-
         val effWeights = adjustWeightsForProfile(weights, riskProfile)
 
         val computed = horses.mapIndexed { idx, h ->
@@ -85,19 +84,9 @@ object QuantPredictor {
                 (fFreshness * effWeights.freshnessWeight) +
                 (fDraw * effWeights.drawWeight)
             val totalScore = techScore + (fMarket * effWeights.marketWeight)
-
             val (winRate, placeRate) = extractWinPlaceRates(h)
 
-            ComputedHorse(
-                horse = h,
-                features = features,
-                techScore = techScore,
-                totalScore = totalScore,
-                drawPct = drawPct,
-                marketProb = marketProb?.coerceIn(1.0, 90.0),
-                winRate = winRate,
-                placeRate = placeRate
-            )
+            ComputedHorse(h, features, techScore, totalScore, drawPct, marketProb?.coerceIn(1.0, 90.0), winRate, placeRate)
         }
 
         val winProbs = softmaxPercents(computed.map { it.totalScore }, temp = 1.45)
@@ -125,8 +114,8 @@ object QuantPredictor {
                     val sign = if (edgePct >= 0) "+$edgePct" else "$edgePct"
                     add("AGF/بازار ${c.marketProb.roundToInt()}٪ | Edge $sign٪")
                 }
-                if (c.bestTimeSec != null) add("بهترین تایم ${formatSec(c.bestTimeSec)}")
-                if (c.daysSinceLast != null) add("استراحت ${c.daysSinceLast} روز")
+                if (c.horse.bestTimeSec != null) add("بهترین تایم ${formatSec(c.horse.bestTimeSec)}")
+                if (c.horse.daysSinceLast != null) add("استراحت ${c.horse.daysSinceLast} روز")
             }.joinToString(" • ")
 
             PreScoredHorse(
@@ -170,14 +159,12 @@ object QuantPredictor {
         }
 
         val topThree = enriched.take(3).mapIndexed { idx, (c, wpf, tem) ->
-            val wp = wpf.first
-            val f = c.features
-            val reasons = buildHorseStrengths(c, f, tem.second, avgWeight, avgBestTime)
+            val reasons = buildHorseStrengths(c, c.features, tem.second, avgWeight, avgBestTime)
             TopPick(
                 rank = idx + 1,
                 number = c.horse.number,
                 horseName = c.horse.horseName,
-                winProbability = wp,
+                winProbability = wpf.first,
                 reason = reasons.ifEmpty { listOf("امتیاز متوازن در مجموع فاکتورهای فنی") }.joinToString(" • ")
             )
         }
