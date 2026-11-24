@@ -60,7 +60,6 @@ fun PredictionResultView(
             Icon(Icons.Default.Share, contentDescription = null)
         }
 
-        // کارت ثبت برنده واقعی برای آموزش خودکار مدل
         ElevatedCard(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.elevatedCardColors(containerColor = Color(0xFFE8F5E9))
