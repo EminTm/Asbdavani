@@ -18,51 +18,52 @@ data class ScrapedPage(
 )
 
 @Serializable
-enum class RiskProfile(val label: String, val instruction: String) {
+enum class RiskProfile(val label: String, val multiplierNote: String) {
     BALANCED(
-        label = "متعادل (پیشنهادی)",
-        instruction = "تحلیل علمی و متعادل بر اساس آمار واقعی، ریتینگ، عملکرد اخیر، وزن، مسافت و چابکسوار ارائه بده."
+        label = "متعادل و علمی (پیشنهادی)",
+        multiplierNote = "تعادل بهینه بین فرم، سرعت، ریتینگ، وزن و سیگنال بازار"
     ),
     CONSERVATIVE(
-        label = "محافظه‌کارانه (کم‌ریسک)",
-        instruction = "تمرکز ویژه روی اسب‌های باثبات‌تر، ریتینگ بالاتر، سوابق مطمئن‌تر و کاهش ریسک داشته باش."
+        label = "محافظه‌کارانه (مدعیان باثبات)",
+        multiplierNote = "وزن بیشتر به ثبات فرم، ریتینگ و تایم‌های مطمئن"
     ),
     UPSET_HUNTER(
-        label = "شکار شگفتی (پرریسک)",
-        instruction = "علاوه بر مدعیان اصلی، به اسب‌های کم‌وزن‌تر، اسب‌هایی که به مسافت جدید می‌رسند یا تغییر چابکسوار داده‌اند و پتانسیل شگفتی‌سازی دارند توجه ویژه کن."
+        label = "شکار شگفتی (Value Hunter)",
+        multiplierNote = "تمرکز ویژه روی اختلاف وزن، دپار، فرم پنهان و Value Edge"
     )
 }
 
 @Serializable
-enum class ThirdProvider(
-    val shortName: String,
-    val title: String,
-    val endpointUrl: String,
-    val defaultModel: String,
-    val helperText: String
-) {
-    COHERE(
-        shortName = "Cohere",
-        title = "Cohere (پایدار - ۱۰۰۰ تحلیل ماهانه)",
-        endpointUrl = "https://api.cohere.ai/compatibility/v1/chat/completions",
-        defaultModel = "command-a-plus-05-2026",
-        helperText = "کلید رایگان از dashboard.cohere.com/api-keys (بدون کارت بانکی)"
-    ),
-    ZAI(
-        shortName = "Z.ai",
-        title = "Z.ai / GLM (رایگان دائمی)",
-        endpointUrl = "https://api.z.ai/api/paas/v4/chat/completions",
-        defaultModel = "glm-4.7-flash",
-        helperText = "کلید رایگان از z.ai (مدل‌های glm-4.7-flash و glm-4.5-flash رایگان)"
-    ),
-    OPENROUTER(
-        shortName = "OpenRouter",
-        title = "OpenRouter",
-        endpointUrl = "https://openrouter.ai/api/v1/chat/completions",
-        defaultModel = "nvidia/nemotron-3.5-super-vl:free",
-        helperText = "کلید رایگان از openrouter.ai/keys"
-    )
-}
+data class ModelWeights(
+    val formWeight: Double = 1.0,
+    val speedWeight: Double = 1.0,
+    val ratingWeight: Double = 1.0,
+    val weightDiffWeight: Double = 1.0,
+    val freshnessWeight: Double = 0.9,
+    val drawWeight: Double = 0.8,
+    val marketWeight: Double = 0.75,
+    val totalRacesLogged: Int = 0,
+    val top1Hits: Int = 0,
+    val top3Hits: Int = 0
+)
+
+data class ParsedHorseRow(
+    val number: String,
+    val gate: Int? = null,
+    val horseName: String,
+    val weightKg: Double? = null,
+    val rating: Double? = null,
+    val formString: String? = null,
+    val recentDigits: List<Int> = emptyList(),
+    val daysSinceLast: Int? = null,
+    val bestTimeSec: Double? = null,
+    val s20Score: Int? = null,
+    val marketOdds: Double? = null,
+    val marketAgfPct: Double? = null,
+    val owner: String = "",
+    val trainer: String = "",
+    val jockey: String = ""
+)
 
 @Serializable
 data class PreScoredHorse(
@@ -113,7 +114,8 @@ data class PredictionReport(
     val anomalyAlerts: List<AnomalySignal> = emptyList(),
     val horseAnalyses: List<HorseAnalysis> = emptyList(),
     val searchSources: List<String> = emptyList(),
-    val disclaimer: String = "این پیش‌بینی یک تحلیل آماری و خبری توسط هوش مصنوعی است؛ تشخیص ناهنجاری‌ها صرفاً بررسی الگوهای مسابقه‌ای است و به معنای اثبات تخلف نیست."
+    val actualWinnerName: String = "",
+    val disclaimer: String = "این پیش‌بینی توسط موتور آماری-کمی خودآموز انجام شده است و تضمینی برای نتیجه قطعی مسابقه نیست."
 )
 
 @Serializable
@@ -151,5 +153,6 @@ data class SavedPrediction(
     val timestamp: String,
     val sourceUrl: String,
     val rawExcerpt: String,
-    val report: PredictionReport
+    val report: PredictionReport,
+    val horseFeatures: Map<String, List<Double>> = emptyMap()
 )
