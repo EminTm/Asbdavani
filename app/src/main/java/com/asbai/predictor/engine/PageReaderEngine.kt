@@ -20,40 +20,44 @@ object PageReaderEngine {
         val jsonBlocks = extractCapturedJsonBlocks(rawText)
         val cleanTextOnly = stripCapturedJsonBlocks(rawText)
 
-        // ۱. اول تلاش برای خواندن مستقیم از JSON رسمیِ شکارشده از شبکه سایت (Unibet / AsbDavani GraphQL)
-        for (block in jsonBlocks.reversed()) {
-            val fromKambi = tryParseKambiJson(block, pageTitle)
-            if (fromKambi != null && fromKambi.horses.size >= 2) {
-                return ReadPageResult(
-                    context = fromKambi,
-                    sourceLabel = "موتور خواننده مستقل: JSON رسمی سایت (دقیق ✅)",
-                    cleanDisplayText = cleanTextOnly
-                )
+        val candidates = mutableListOf<Pair<ParsedRaceContext, String>>()
+
+        // ۱. بررسی همه JSONهای شکارشده از شبکه سایت (به جای توقف روی اولین مورد)
+        for (block in jsonBlocks) {
+            tryParseKambiJson(block, pageTitle)?.let {
+                candidates.add(it to "موتور خواننده: JSON شبکه سایت (${it.horses.size} اسب ✅)")
             }
-            val fromGenericJson = tryParseGenericRacingJson(block, pageTitle)
-            if (fromGenericJson != null && fromGenericJson.horses.size >= 2) {
-                return ReadPageResult(
-                    context = fromGenericJson,
-                    sourceLabel = "موتور خواننده مستقل: داده‌های ساختاری سایت ✅",
-                    cleanDisplayText = cleanTextOnly
-                )
+            tryParseGenericRacingJson(block, pageTitle)?.let {
+                candidates.add(it to "موتور خواننده: داده‌های ساختاری JSON (${it.horses.size} اسب ✅)")
             }
         }
 
-        // ۲. در غیر این صورت خواندن از جدول‌ها و کارت‌های صفحه (TJK / AsbDavani / Unibet)
-        val parsed = MultiSiteParser.parse(cleanTextOnly, pageTitle, sourceUrl)
-        val label = when {
-            "tjk.org" in sourceUrl && parsed.horses.size >= 2 -> "موتور خواننده مستقل: جدول رسمی TJK ✅"
-            "asbdavani" in sourceUrl && parsed.horses.size >= 2 -> "موتور خواننده مستقل: جدول اسبدوانی ✅"
-            parsed.horses.size >= 2 -> "موتور خواننده مستقل: خوانش ساختاریافته صفحه ✅"
-            else -> "داده کافی یافت نشد"
+        // ۲. بررسی جداول و متن صفحه
+        val fromParser = MultiSiteParser.parse(cleanTextOnly, pageTitle, sourceUrl)
+        if (fromParser.horses.isNotEmpty()) {
+            val lbl = when {
+                "tjk.org" in sourceUrl -> "موتور خواننده: جدول رسمی TJK (${fromParser.horses.size} اسب ✅)"
+                "asbdavani" in sourceUrl -> "موتور خواننده: جدول اسبدوانی (${fromParser.horses.size} اسب ✅)"
+                else -> "موتور خواننده: خوانش صفحه (${fromParser.horses.size} اسب ✅)"
+            }
+            candidates.add(fromParser to lbl)
         }
 
-        return ReadPageResult(
-            context = parsed,
-            sourceLabel = label,
-            cleanDisplayText = cleanTextOnly
-        )
+        // انتخاب کامل‌ترین لیست با بیشترین تعداد اسب
+        val winner = candidates.maxByOrNull { it.first.horses.size }
+        return if (winner != null && winner.first.horses.size >= 2) {
+            ReadPageResult(
+                context = winner.first,
+                sourceLabel = winner.second,
+                cleanDisplayText = cleanTextOnly
+            )
+        } else {
+            ReadPageResult(
+                context = fromParser,
+                sourceLabel = "داده کافی یافت نشد",
+                cleanDisplayText = cleanTextOnly
+            )
+        }
     }
 
     fun stripCapturedJsonBlocks(rawText: String): String {
@@ -80,16 +84,26 @@ object PageReaderEngine {
         return runCatching {
             val parsed = JSONTokener(jsonText).nextValue()
             val rootObj = parsed as? JSONObject ?: return@runCatching null
-
             val betOffers = rootObj.optJSONArray("betOffers") ?: return@runCatching null
+
             var bestOutcomes: JSONArray? = null
+            var bestScore = -1
+
             for (i in 0 until betOffers.length()) {
                 val bo = betOffers.optJSONObject(i) ?: continue
-                val typeName = bo.optJSONObject("betOfferType")?.optString("name").orEmpty()
                 val outcomes = bo.optJSONArray("outcomes") ?: continue
-                if (outcomes.length() >= 2 && (typeName.contains("Win", true) || typeName.contains("Vinnare", true) || bestOutcomes == null)) {
+                if (outcomes.length() < 2) continue
+
+                val typeName = bo.optJSONObject("betOfferType")?.optString("name").orEmpty().lowercase()
+                val critName = bo.optJSONObject("criterion")?.optString("label").orEmpty().lowercase()
+                val isWinType = "win" in typeName || "winnaar" in typeName || "vinnare" in typeName ||
+                    "gagnant" in typeName || "win" in critName || "winnaar" in critName
+                val isNotH2H = "head" !in typeName && "match" !in typeName && "top" !in critName && "each" !in critName
+
+                val score = outcomes.length() + (if (isWinType) 100 else 0) + (if (isNotH2H) 20 else 0)
+                if (score > bestScore) {
+                    bestScore = score
                     bestOutcomes = outcomes
-                    if (typeName.contains("Win", true)) break
                 }
             }
             val outcomes = bestOutcomes ?: return@runCatching null
@@ -105,7 +119,7 @@ object PageReaderEngine {
                 if (status.equals("NON_RUNNER", true) || status.equals("SCRATCHED", true)) continue
 
                 val rawName = o.optString("englishLabel").ifBlank { o.optString("label") }.trim()
-                if (rawName.length < 2 || rawName.equals("Other", true)) continue
+                if (rawName.length < 2 || rawName.equals("Other", true) || rawName.equals("Field", true)) continue
 
                 val rawNum = o.optString("startNumber").ifBlank { o.optString("clothNumber") }.trim()
                 val num = if (rawNum.isNotBlank() && rawNum.length <= 3) rawNum else (horses.size + 1).toString()
@@ -154,7 +168,7 @@ object PageReaderEngine {
     private fun collectCandidateArrays(node: Any?, out: MutableList<JSONArray>) {
         when (node) {
             is JSONArray -> {
-                if (node.length() in 2..32 && node.optJSONObject(0) != null) {
+                if (node.length() in 2..36 && node.optJSONObject(0) != null) {
                     out.add(node)
                 }
                 for (i in 0 until node.length()) {
