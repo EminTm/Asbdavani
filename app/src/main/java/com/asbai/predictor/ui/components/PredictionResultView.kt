@@ -15,10 +15,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.CardDefaults
@@ -31,6 +33,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -46,7 +49,8 @@ import java.util.Locale
 fun PredictionResultView(
     report: PredictionReport,
     onExportPdf: () -> Unit,
-    onRecordWinner: (number: String, horseName: String) -> Unit
+    onRecordWinner: (number: String, horseName: String) -> Unit,
+    onToggleScratch: (number: String, horseName: String) -> Unit
 ) {
     Column(
         modifier = Modifier.fillMaxWidth(),
@@ -60,41 +64,7 @@ fun PredictionResultView(
             Icon(Icons.Default.Share, contentDescription = null)
         }
 
-        ElevatedCard(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.elevatedCardColors(containerColor = Color(0xFFE8F5E9))
-        ) {
-            Column(modifier = Modifier.padding(14.dp)) {
-                if (report.actualWinnerName.isNotBlank()) {
-                    Text(
-                        text = "🏆 برنده ثبت‌شده برای این کورس: ${report.actualWinnerName}",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFF1B5E20)
-                    )
-                } else {
-                    Text(
-                        text = "🎓 آموزش مدل (بعد از مسابقه برنده واقعی را لمس کنید):",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFF1B5E20)
-                    )
-                    Spacer(Modifier.height(6.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        report.horseAnalyses.forEach { h ->
-                            AssistChip(
-                                onClick = { onRecordWinner(h.number, h.horseName) },
-                                label = { Text("#${h.number} ${h.horseName}") }
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
+        // خلاصه کورس + ستاره‌های اطمینان + Advantage Pick + منبع خوانش
         ElevatedCard(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
@@ -105,15 +75,16 @@ fun PredictionResultView(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = "تحلیل کمی و آماری کورس",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        repeat(report.confidenceStars.coerceIn(1, 4)) {
+                            Icon(Icons.Default.Star, contentDescription = null, tint = Color(0xFFD4AF37), modifier = Modifier.width(18.dp).height(18.dp))
+                        }
+                        Spacer(Modifier.width(6.dp))
+                        Text("تحلیل کمی کورس", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    }
                     Surface(color = MaterialTheme.colorScheme.primary, shape = RoundedCornerShape(50)) {
                         Text(
-                            text = "اطمینان: ${report.confidenceLevel} (${report.confidencePercent}٪)",
+                            text = "${report.confidenceLevel} (${report.confidencePercent}٪)",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onPrimary,
                             modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
@@ -123,8 +94,60 @@ fun PredictionResultView(
                 Spacer(Modifier.height(8.dp))
                 Text(report.raceSummary, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
                 if (report.trackAndClassNote.isNotBlank()) {
-                    Spacer(Modifier.height(6.dp))
+                    Spacer(Modifier.height(4.dp))
                     Text(report.trackAndClassNote, style = MaterialTheme.typography.bodySmall)
+                }
+                if (report.advantageNote.isNotBlank()) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(report.advantageNote, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold, color = Color(0xFF0A4D2E))
+                }
+                if (report.comboSuggestion.isNotBlank()) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(report.comboSuggestion, style = MaterialTheme.typography.bodySmall, color = Color(0xFF1A3B5D))
+                }
+                if (report.extractionSource.isNotBlank()) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(report.extractionSource, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+
+        // اسب‌های خط‌خورده (Scratch) با امکان بازگردانی
+        if (report.scratchedKeys.isNotEmpty()) {
+            OutlinedCard(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Text("اسب‌های خط‌خورده (برای بازگردانی لمس کنید):", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(6.dp))
+                    Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        report.scratchedKeys.forEach { key ->
+                            val num = key.substringBefore(":")
+                            val name = key.substringAfter(":", "")
+                            AssistChip(
+                                onClick = { onToggleScratch(num, name) },
+                                label = { Text("بازگردانی #$num $name") }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // ثبت برنده واقعی برای آموزش خودکار مدل
+        ElevatedCard(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.elevatedCardColors(containerColor = Color(0xFFE8F5E9))
+        ) {
+            Column(modifier = Modifier.padding(14.dp)) {
+                if (report.actualWinnerName.isNotBlank()) {
+                    Text("🏆 برنده ثبت‌شده: ${report.actualWinnerName}", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = Color(0xFF1B5E20))
+                } else {
+                    Text("🎓 آموزش مدل (بعد از مسابقه برنده واقعی را لمس کنید):", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = Color(0xFF1B5E20))
+                    Spacer(Modifier.height(6.dp))
+                    Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        report.horseAnalyses.forEach { h ->
+                            AssistChip(onClick = { onRecordWinner(h.number, h.horseName) }, label = { Text("#${h.number} ${h.horseName}") })
+                        }
+                    }
                 }
             }
         }
@@ -156,14 +179,13 @@ fun PredictionResultView(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Default.BarChart, contentDescription = null, tint = Color(0xFF2E7D32))
                         Spacer(Modifier.width(8.dp))
-                        Text("ضرایب منصفانه و ارزش پنهان (Value Edge)", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = Color(0xFF1B5E20))
+                        Text("ضرایب منصفانه و حداقل ضریب باارزش", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = Color(0xFF1B5E20))
                     }
                     if (valuePicks.isNotEmpty()) {
                         Spacer(Modifier.height(6.dp))
                         Surface(color = Color(0xFFDCEFD5), shape = RoundedCornerShape(8.dp)) {
                             Text(
-                                text = "🔥 ارزش پنهان نسبت به AGF/بازار: " +
-                                    valuePicks.joinToString("، ") { "#${it.number} ${it.horseName} (+${it.edgePercent}٪)" },
+                                text = "🔥 ارزش پنهان (Edge مثبت): " + valuePicks.joinToString("، ") { "#${it.number} ${it.horseName} (+${it.edgePercent}٪)" },
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = Color(0xFF145A1A),
@@ -175,7 +197,7 @@ fun PredictionResultView(
                     report.preScores.take(6).forEachIndexed { idx, h ->
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                             Text("${idx + 1}. #${h.number} ${h.horseName}", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                            val oddsTxt = if (h.fairOdds > 0) " | ضریب ${String.format(Locale.US, "%.1f", h.fairOdds)}" else ""
+                            val oddsTxt = if (h.fairOdds > 0) " | ضریب ≥ ${String.format(Locale.US, "%.1f", h.minValueOdds)}" else ""
                             Text("${h.mathWinProb}٪$oddsTxt", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = Color(0xFF2E7D32))
                         }
                         if (h.summary.isNotBlank()) Text(h.summary, style = MaterialTheme.typography.labelSmall, color = Color(0xFF424242))
@@ -186,10 +208,7 @@ fun PredictionResultView(
         }
 
         if (report.anomalyAlerts.isNotEmpty()) {
-            ElevatedCard(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.elevatedCardColors(containerColor = Color(0xFFFFF4E5))
-            ) {
+            ElevatedCard(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.elevatedCardColors(containerColor = Color(0xFFFFF4E5))) {
                 Column(modifier = Modifier.padding(14.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Default.Warning, contentDescription = null, tint = Color(0xFFB35C00))
@@ -222,15 +241,12 @@ fun PredictionResultView(
 
         report.darkHorse?.let { dark ->
             if (dark.horseName.isNotBlank()) {
-                ElevatedCard(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
-                ) {
+                ElevatedCard(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
                     Column(modifier = Modifier.padding(14.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Default.Bolt, contentDescription = null, tint = MaterialTheme.colorScheme.onSecondaryContainer)
                             Spacer(Modifier.width(6.dp))
-                            Text("گزینه شگفتی‌ساز (ارزش بالا): #${dark.number} ${dark.horseName} (${dark.winProbability}٪)", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                            Text("گزینه شگفتی‌ساز: #${dark.number} ${dark.horseName} (${dark.winProbability}٪)", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                         }
                         Spacer(Modifier.height(4.dp))
                         Text(dark.reason, style = MaterialTheme.typography.bodySmall)
@@ -240,9 +256,9 @@ fun PredictionResultView(
         }
 
         if (report.horseAnalyses.isNotEmpty()) {
-            Text("جزئیات فنی تک‌تک اسب‌ها", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 4.dp))
+            Text("آنالیز کامل اسب‌ها (۳ ستون تخصصی SPAIA)", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 4.dp))
             report.horseAnalyses.sortedByDescending { it.winProbability }.forEach { horse ->
-                HorseAnalysisCard(horse)
+                HorseAnalysisCard(horse = horse, onScratch = { onToggleScratch(horse.number, horse.horseName) })
             }
         }
 
@@ -276,22 +292,55 @@ private fun TopPickItem(pick: TopPick) {
 }
 
 @Composable
-private fun HorseAnalysisCard(horse: HorseAnalysis) {
+private fun HorseAnalysisCard(horse: HorseAnalysis, onScratch: () -> Unit) {
     OutlinedCard(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(14.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Text("#${horse.number}  ${horse.horseName}", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-                Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(6.dp)) {
-                    Text("آمادگی: ${horse.formScore}/10", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp))
+                val markPrefix = if (horse.mark.isNotBlank()) "${horse.mark} " else ""
+                Text(
+                    text = "$markPrefix#${horse.number}  ${horse.horseName}",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(onClick = onScratch) {
+                    Icon(Icons.Default.Close, contentDescription = "خط‌خورد", modifier = Modifier.width(14.dp).height(14.dp))
+                    Spacer(Modifier.width(3.dp))
+                    Text("خط‌خورد", style = MaterialTheme.typography.labelSmall)
                 }
             }
-            Spacer(Modifier.height(8.dp))
+
+            if (horse.marketBadge.isNotBlank() || horse.speedBadge.isNotBlank()) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(bottom = 6.dp)) {
+                    if (horse.marketBadge.isNotBlank()) {
+                        Surface(color = Color(0xFFFFF3CD), shape = RoundedCornerShape(6.dp)) {
+                            Text(horse.marketBadge, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = Color(0xFF7A5901), modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
+                        }
+                    }
+                    if (horse.speedBadge.isNotBlank()) {
+                        Surface(color = Color(0xFFE0F2F1), shape = RoundedCornerShape(6.dp)) {
+                            Text(horse.speedBadge, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = Color(0xFF004D40), modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
+                        }
+                    }
+                }
+            }
+
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("شانس برد: ${horse.winProbability}٪", style = MaterialTheme.typography.labelMedium)
-                Text("شانس سکو: ${horse.placeProbability}٪", style = MaterialTheme.typography.labelMedium)
+                Text("برد: ${horse.winProbability}٪ (سکو: ${horse.placeProbability}٪)", style = MaterialTheme.typography.labelMedium)
+                if (horse.fairOdds > 0) {
+                    Text("ضریب باارزش ≥ ${String.format(Locale.US, "%.1f", horse.minValueOdds)}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                }
             }
             Spacer(Modifier.height(4.dp))
             LinearProgressIndicator(progress = { (horse.winProbability.coerceIn(0, 100)) / 100f }, modifier = Modifier.fillMaxWidth().height(7.dp))
+
+            Spacer(Modifier.height(8.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("🐎 توانایی: ${horse.abilityScore}/10", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold)
+                Text("⏱ سرعت/آمادگی: ${horse.speedFitnessScore}/10", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold)
+                Text("📏 تناسب: ${horse.suitabilityScore}/10", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold)
+            }
+
             if (horse.strengths.isNotEmpty()) {
                 Spacer(Modifier.height(8.dp))
                 horse.strengths.forEach { point ->
