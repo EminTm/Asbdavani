@@ -23,7 +23,7 @@ object MultiSiteParser {
     private val distRegex = Regex("""(\d{3,4})\s*(?:متر|m\.?)?\s*(چمن|خاکی|سنتتیک|Çim|Kum|Sentetik|Dirt|Turf|AW)?""", RegexOption.IGNORE_CASE)
 
     private val noiseWords = setOf(
-        "win", "place", "show", "each way", "ew", "sp", "nr", "non-runner",
+        "win", "place", "show", "each way", "ew", "nr", "non-runner",
         "non runner", "uitgeschakeld", "voorspelling", "wedden", "odds", "form",
         "live", "info", "stats", "results", "racecard", "unibet", "paardenraces",
         "favoriet", "race", "races", "all", "today", "tomorrow", "cet", "gmt", "bst",
@@ -92,17 +92,15 @@ object MultiSiteParser {
             }
         }
 
-        val tjkParsed = parseTjkTables(lines)
-        val asbParsed = if (tjkParsed.isEmpty()) parseAsbdavaniTables(lines) else emptyList()
-        val genericPipes = if (tjkParsed.isEmpty() && asbParsed.isEmpty()) parseGenericRows(lines) else emptyList()
-        val asbCards = if (tjkParsed.isEmpty() && asbParsed.isEmpty() && genericPipes.size < 2) parseAsbdavaniCardBlocks(lines) else emptyList()
-        val unibetBlocks = if (tjkParsed.isEmpty() && asbParsed.isEmpty() && genericPipes.size < 2 && asbCards.size < 2) {
+        val candidates = listOf(
+            parseTjkTables(lines),
+            parseAsbdavaniTables(lines),
+            parseGenericRows(lines),
+            parseAsbdavaniCardBlocks(lines),
             parseUnibetOrLineBlocks(lines)
-        } else emptyList()
+        )
 
-        val horses = listOf(tjkParsed, asbParsed, genericPipes, asbCards, unibetBlocks)
-            .firstOrNull { it.size >= 2 }
-            .orEmpty()
+        val horses = (candidates.maxByOrNull { it.size }.orEmpty())
             .distinctBy { "${it.number}:${it.horseName.lowercase()}" }
 
         val cleanTitle = pageTitle.ifBlank {
@@ -113,31 +111,16 @@ object MultiSiteParser {
             }
         }
 
-        return ParsedRaceContext(
-            raceTitle = cleanTitle,
-            distanceMeters = distMeters,
-            surface = surface,
-            horses = horses
-        )
+        return ParsedRaceContext(cleanTitle, distMeters, surface, horses)
     }
 
     private fun parseTjkTables(lines: List<String>): List<ParsedHorseRow> {
         val out = mutableListOf<ParsedHorseRow>()
         var inTable = false
-        var idxNum = -1
-        var idxName = -1
-        var idxWeight = -1
-        var idxJockey = -1
-        var idxOwner = -1
-        var idxTrainer = -1
-        var idxGate = -1
-        var idxHp = -1
-        var idxSon6 = -1
-        var idxKgs = -1
-        var idxS20 = -1
-        var idxBestTime = -1
-        var idxGny = -1
-        var idxAgf = -1
+        var idxNum = -1; var idxName = -1; var idxWeight = -1; var idxJockey = -1
+        var idxOwner = -1; var idxTrainer = -1; var idxGate = -1; var idxHp = -1
+        var idxSon6 = -1; var idxKgs = -1; var idxS20 = -1; var idxBestTime = -1
+        var idxGny = -1; var idxAgf = -1
 
         for (line in lines) {
             if (!line.contains("|")) continue
@@ -186,30 +169,19 @@ object MultiSiteParser {
                 cells[idxSon6].filter { it.isDigit() }.map { ch -> if (ch == '0') 10 else ch.digitToInt() }
             } else emptyList()
 
-            val bestTime = if (idxBestTime in cells.indices) parseTimeSeconds(cells[idxBestTime]) else null
-            val gateVal = if (idxGate in cells.indices) Regex("""(\d{1,2})""").find(cells[idxGate])?.groupValues?.get(1)?.toIntOrNull() else null
-            val weightVal = if (idxWeight in cells.indices) Regex("""(\d{2}(?:\.\d)?)""").find(cells[idxWeight])?.value?.toDoubleOrNull() else null
-            val hpVal = if (idxHp in cells.indices) cells[idxHp].toDoubleOrNull() else null
-            val kgsVal = if (idxKgs in cells.indices) cells[idxKgs].toIntOrNull() else null
-            val s20Val = if (idxS20 in cells.indices) cells[idxS20].toIntOrNull() else null
-            val gnyVal = if (idxGny in cells.indices) cells[idxGny].replace(",", ".").toDoubleOrNull() else null
-            val agfVal = if (idxAgf in cells.indices) {
-                agfRegex.find(cells[idxAgf])?.let { (it.groupValues[1].ifBlank { it.groupValues[2] }).toDoubleOrNull() }
-            } else null
-
             out.add(
                 ParsedHorseRow(
                     number = number,
-                    gate = gateVal,
+                    gate = if (idxGate in cells.indices) Regex("""(\d{1,2})""").find(cells[idxGate])?.groupValues?.get(1)?.toIntOrNull() else null,
                     horseName = cleanName,
-                    weightKg = weightVal,
-                    rating = hpVal,
+                    weightKg = if (idxWeight in cells.indices) Regex("""(\d{2}(?:\.\d)?)""").find(cells[idxWeight])?.value?.toDoubleOrNull() else null,
+                    rating = if (idxHp in cells.indices) cells[idxHp].toDoubleOrNull() else null,
                     recentDigits = son6Digits,
-                    daysSinceLast = kgsVal,
-                    bestTimeSec = bestTime,
-                    s20Score = s20Val,
-                    marketOdds = gnyVal,
-                    marketAgfPct = agfVal,
+                    daysSinceLast = if (idxKgs in cells.indices) cells[idxKgs].toIntOrNull() else null,
+                    bestTimeSec = if (idxBestTime in cells.indices) parseTimeSeconds(cells[idxBestTime]) else null,
+                    s20Score = if (idxS20 in cells.indices) cells[idxS20].toIntOrNull() else null,
+                    marketOdds = if (idxGny in cells.indices) cells[idxGny].replace(",", ".").toDoubleOrNull() else null,
+                    marketAgfPct = if (idxAgf in cells.indices) agfRegex.find(cells[idxAgf])?.let { (it.groupValues[1].ifBlank { it.groupValues[2] }).toDoubleOrNull() } else null,
                     owner = if (idxOwner in cells.indices) cells[idxOwner].replace("·", " ").trim() else "",
                     trainer = if (idxTrainer in cells.indices) cells[idxTrainer].replace("·", " ").trim() else "",
                     jockey = if (idxJockey in cells.indices) cells[idxJockey].replace("·", " ").trim() else ""
@@ -222,11 +194,7 @@ object MultiSiteParser {
     private fun parseAsbdavaniTables(lines: List<String>): List<ParsedHorseRow> {
         val out = mutableListOf<ParsedHorseRow>()
         var inTable = false
-        var idxGateCol = -1
-        var idxHorse = -1
-        var idxStats = -1
-        var idxForm = -1
-        var idxPeople = -1
+        var idxGateCol = -1; var idxHorse = -1; var idxStats = -1; var idxForm = -1; var idxPeople = -1
 
         for (line in lines) {
             if (!line.contains("|")) continue
@@ -272,16 +240,8 @@ object MultiSiteParser {
                 ?: Regex("""\b(\d{1,3})\s*$""").find(statsText)?.groupValues?.get(1)?.toDoubleOrNull()?.takeIf { it in 10.0..140.0 }
 
             val formStr = formRegex.find(cells.getOrNull(idxForm) ?: line)?.value
-
-            val peopleParts = cells.getOrNull(idxPeople).orEmpty()
-                .split("·").map { it.trim() }.filter { it.isNotEmpty() }
-            val owner = peopleParts.getOrElse(0) { "" }
-            val trainer = peopleParts.getOrElse(1) { "" }
-            val jockey = peopleParts.getOrElse(2) { "" }
-
-            val agfVal = agfRegex.find(formRegex.replace(line, " "))?.let {
-                (it.groupValues[1].ifBlank { it.groupValues[2] }).toDoubleOrNull()
-            }
+            val peopleParts = cells.getOrNull(idxPeople).orEmpty().split("·").map { it.trim() }.filter { it.isNotEmpty() }
+            val agfVal = agfRegex.find(formRegex.replace(line, " "))?.let { (it.groupValues[1].ifBlank { it.groupValues[2] }).toDoubleOrNull() }
 
             out.add(
                 ParsedHorseRow(
@@ -292,9 +252,9 @@ object MultiSiteParser {
                     rating = ior,
                     formString = formStr,
                     marketAgfPct = agfVal,
-                    owner = owner,
-                    trainer = trainer,
-                    jockey = jockey
+                    owner = peopleParts.getOrElse(0) { "" },
+                    trainer = peopleParts.getOrElse(1) { "" },
+                    jockey = peopleParts.getOrElse(2) { "" }
                 )
             )
         }
@@ -313,8 +273,7 @@ object MultiSiteParser {
             val formStr = formRegex.find(line)?.value
             val noForm = formRegex.replace(line, " ")
             val agfVal = agfRegex.find(noForm)?.let { (it.groupValues[1].ifBlank { it.groupValues[2] }).toDoubleOrNull() }
-            val decOdds = cells.firstNotNullOfOrNull { parseOddsToken(it) }
-
+            val decOdds = cells.firstNotNullOfOrNull { parseOddsToken(it) }?.takeIf { it > 1.0 }
             if (formStr == null && agfVal == null && decOdds == null) continue
 
             val number = Regex("""^(\d{1,2})\b""").find(first)?.groupValues?.get(1) ?: (out.size + 1).toString()
@@ -323,27 +282,22 @@ object MultiSiteParser {
             }.orEmpty().take(36)
             if (horseName.isBlank()) continue
 
-            out.add(
-                ParsedHorseRow(
-                    number = number,
-                    horseName = horseName,
-                    weightKg = weightRegex.find(noForm)?.value?.toDoubleOrNull(),
-                    formString = formStr,
-                    marketOdds = decOdds,
-                    marketAgfPct = agfVal
-                )
-            )
+            out.add(ParsedHorseRow(number = number, horseName = horseName, weightKg = weightRegex.find(noForm)?.value?.toDoubleOrNull(), formString = formStr, marketOdds = decOdds, marketAgfPct = agfVal))
         }
         return out
     }
 
+    // برای کارت‌های موبایلی asbdavani (حتی برای اسب‌های بدون استارت قبلی)
     private fun parseAsbdavaniCardBlocks(lines: List<String>): List<ParsedHorseRow> {
         val out = mutableListOf<ParsedHorseRow>()
         var blockStart = 0
         for (i in lines.indices) {
-            val formMatch = formRegex.find(lines[i]) ?: continue
-            val start = maxOf(blockStart, i - 6)
-            val end = minOf(lines.lastIndex, i + 4)
+            val isShirtMarker = lines[i].contains("پیراهن شماره")
+            val isFormMarker = formRegex.containsMatchIn(lines[i])
+            if (!isShirtMarker && !isFormMarker) continue
+
+            val start = maxOf(blockStart, if (isShirtMarker) i else i - 5)
+            val end = minOf(lines.lastIndex, if (isShirtMarker) i + 6 else i + 3)
             val window = lines.subList(start, end + 1)
             val joined = window.joinToString(" | ")
 
@@ -356,15 +310,13 @@ object MultiSiteParser {
             }
 
             val name = window.firstOrNull { ln ->
-                ln.length in 2..36 &&
-                    !formRegex.containsMatchIn(ln) &&
-                    !ln.contains("پیراهن") && !ln.contains("کیلو") && !ln.contains("IOR") &&
-                    !ln.contains("دپار") && !ln.contains("مقام") && !ln.contains("عملکرد") &&
-                    Regex("""[\u0600-\u06FFa-zA-Z]""").containsMatchIn(ln) &&
-                    !Regex("""^[\d\s/%.\-(),]+$""").matches(ln)
+                ln.length in 2..36 && !formRegex.containsMatchIn(ln) && !ln.contains("پیراهن") &&
+                    !ln.contains("کیلو") && !ln.contains("IOR") && !ln.contains("دپار") &&
+                    !ln.contains("مقام") && !ln.contains("عملکرد") && !ln.startsWith("(") &&
+                    Regex("""[\u0600-\u06FFa-zA-Z]""").containsMatchIn(ln) && !Regex("""^[\d\s/%.\-(),]+$""").matches(ln)
             }.orEmpty()
 
-            if (name.isNotBlank()) {
+            if (name.isNotBlank() && out.none { it.horseName == name }) {
                 out.add(
                     ParsedHorseRow(
                         number = num,
@@ -372,16 +324,16 @@ object MultiSiteParser {
                         horseName = name,
                         weightKg = Regex("""(\d{2}(?:\.\d)?)\s*(?:کیلو|kg)""").find(joined)?.groupValues?.get(1)?.toDoubleOrNull(),
                         rating = Regex("""IOR\s*[:：]?\s*(\d{1,3})""", RegexOption.IGNORE_CASE).find(joined)?.groupValues?.get(1)?.toDoubleOrNull(),
-                        formString = formMatch.value
+                        formString = formRegex.find(joined)?.value
                     )
                 )
-                blockStart = i + 1
+                blockStart = end + 1
             }
         }
         return out
     }
 
-    // جستجوی رو به بالا از روی هر ضریب (مخصوص Unibet و سایت‌های بدون جدول)
+    // جستجوی رو به بالا از روی هر ضریب (Unibet با ۱ یا ۲ رقم اعشار و SP)
     private fun parseUnibetOrLineBlocks(lines: List<String>): List<ParsedHorseRow> {
         val out = mutableListOf<ParsedHorseRow>()
         val bodyIdx = lines.indexOfFirst { it.contains("--- متن") || it.contains("متن صفحه") }
@@ -391,12 +343,9 @@ object MultiSiteParser {
         var i = startIdx
         while (i < lines.size) {
             val odds = parseOddsToken(lines[i])
-            if (odds == null) {
-                i++
-                continue
-            }
+            if (odds == null) { i++; continue }
 
-            val winFrom = maxOf(blockStart, i - 6)
+            val winFrom = maxOf(blockStart, i - 10)
             var number: String? = null
             var gate: Int? = null
             var horseName = ""
@@ -404,7 +353,6 @@ object MultiSiteParser {
             var trainer = ""
             var formStr: String? = null
 
-            // حرکت رو به بالا از نزدیک‌ترین خط بالای ضریب تا به تیتر صفحه نخورد
             for (k in (i - 1) downTo winFrom) {
                 val trimmed = lines[k].trim()
                 if (trimmed.isBlank()) continue
@@ -441,9 +389,7 @@ object MultiSiteParser {
 
                 if (horseName.isBlank()) {
                     val candidate = cleanCandidateHorseName(trimmed)
-                    if (isValidHorseName(candidate)) {
-                        horseName = candidate
-                    }
+                    if (isValidHorseName(candidate)) horseName = candidate
                 }
             }
 
@@ -456,15 +402,13 @@ object MultiSiteParser {
                         horseName = horseName.take(36),
                         weightKg = weightRegex.find(joined)?.value?.toDoubleOrNull(),
                         formString = formStr,
-                        marketOdds = odds,
+                        marketOdds = odds.takeIf { it > 1.0 },
                         trainer = trainer,
                         jockey = jockey
                     )
                 )
                 blockStart = i + 1
-                if (i + 1 < lines.size && parseOddsToken(lines[i + 1]) != null) {
-                    i++
-                }
+                if (i + 1 < lines.size && parseOddsToken(lines[i + 1]) != null) i++
             }
             i++
         }
@@ -474,9 +418,10 @@ object MultiSiteParser {
     private fun parseOddsToken(raw: String): Double? {
         val s = raw.trim()
         if (s.contains(":") || s.contains("%")) return null
+        if (s.equals("sp", true)) return 0.0
         if (s.equals("evens", true) || s.equals("evs", true)) return 2.0
 
-        val dec = Regex("""^(\d{1,3})[.,](\d{2})$""").find(s)
+        val dec = Regex("""^(\d{1,3})[.,](\d{1,2})$""").find(s)
         if (dec != null) {
             val v = "${dec.groupValues[1]}.${dec.groupValues[2]}".toDoubleOrNull()
             if (v != null && v in 1.05..200.0) return v
@@ -492,9 +437,7 @@ object MultiSiteParser {
     }
 
     private fun cleanCandidateHorseName(raw: String): String {
-        return raw.replace(Regex("""\(\d{1,2}\)\s*$"""), "")
-            .replace(Regex("""\s+"""), " ")
-            .trim()
+        return raw.replace(Regex("""\(\d{1,2}\)\s*$"""), "").replace(Regex("""\s+"""), " ").trim()
     }
 
     private fun isValidHorseName(s: String): Boolean {
