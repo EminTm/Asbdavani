@@ -88,7 +88,7 @@ import java.util.Locale
 
 private val QUICK_SITES = listOf(
     "🇮🇷 اسبدوانی" to "https://asbdavani.app/racecards",
-    "🇹🇷 TJK ترکیه" to "https://www.tjk.org/TR/yarissever/Info/Page/GunlukYarisProgrami?QueryParameter_Tarih=20/11/2026&Era=today&1=1#",
+    "🇹🇷 TJK ترکیه" to "https://www.tjk.org/TR/YarisSever/Info/Page/GunlukYarisProgrami",
     "🇳🇱 Unibet" to "https://www.unibet.nl/betting/racing"
 )
 
@@ -128,13 +128,7 @@ fun MainScreen(viewModel: MainViewModel) {
     ) { innerPadding ->
         Column(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
             state.availableUpdate?.let { update ->
-                UpdateAvailableBanner(
-                    update = update,
-                    isDownloading = state.isDownloadingUpdate,
-                    progress = state.updateDownloadProgress,
-                    onInstallClick = { viewModel.installAvailableUpdate() },
-                    onDismiss = { viewModel.dismissUpdateBanner() }
-                )
+                UpdateAvailableBanner(update, state.isDownloadingUpdate, state.updateDownloadProgress, { viewModel.installAvailableUpdate() }, { viewModel.dismissUpdateBanner() })
             }
             StatusBanners(state.statusMessage, state.errorMessage) { viewModel.clearMessages() }
             when (state.selectedTab) {
@@ -152,17 +146,8 @@ fun MainScreen(viewModel: MainViewModel) {
 }
 
 @Composable
-private fun UpdateAvailableBanner(
-    update: AppUpdateInfo,
-    isDownloading: Boolean,
-    progress: Int,
-    onInstallClick: () -> Unit,
-    onDismiss: () -> Unit
-) {
-    ElevatedCard(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
-        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
-    ) {
+private fun UpdateAvailableBanner(update: AppUpdateInfo, isDownloading: Boolean, progress: Int, onInstallClick: () -> Unit, onDismiss: () -> Unit) {
+    ElevatedCard(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp), colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
         Column(modifier = Modifier.padding(12.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("نسخه جدید ${update.versionName} آماده است!", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
@@ -187,17 +172,10 @@ private fun StatusBanners(statusMessage: String?, errorMessage: String?, onDismi
     val isErr = errorMessage != null
     ElevatedCard(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
-        colors = CardDefaults.elevatedCardColors(
-            containerColor = if (isErr) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.primaryContainer
-        )
+        colors = CardDefaults.elevatedCardColors(containerColor = if (isErr) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.primaryContainer)
     ) {
         Row(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = msg,
-                color = if (isErr) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onPrimaryContainer,
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.weight(1f)
-            )
+            Text(msg, color = if (isErr) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onPrimaryContainer, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
             IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, contentDescription = "بستن") }
         }
     }
@@ -224,20 +202,10 @@ private fun PredictTab(state: MainUiState, viewModel: MainViewModel) {
                     }
                 }
                 Spacer(Modifier.height(6.dp))
-                OutlinedTextField(
-                    value = state.urlInput,
-                    onValueChange = { viewModel.updateUrlInput(it) },
-                    label = { Text("آدرس صفحه مسابقات") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
+                OutlinedTextField(value = state.urlInput, onValueChange = { viewModel.updateUrlInput(it) }, label = { Text("آدرس صفحه مسابقات") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 Spacer(Modifier.height(8.dp))
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(
-                        onClick = { viewModel.fetchFromSite() },
-                        enabled = !state.isFetchingSite && !state.isAnalyzing,
-                        modifier = Modifier.weight(1f)
-                    ) {
+                    Button(onClick = { viewModel.fetchFromSite() }, enabled = !state.isFetchingSite && !state.isAnalyzing, modifier = Modifier.weight(1f)) {
                         if (state.isFetchingSite) {
                             CircularProgressIndicator(modifier = Modifier.width(18.dp).height(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
                             Spacer(Modifier.width(8.dp))
@@ -252,11 +220,23 @@ private fun PredictTab(state: MainUiState, viewModel: MainViewModel) {
                 }
                 if (state.needsWebViewHint) {
                     Spacer(Modifier.height(8.dp))
-                    Text(
-                        text = "برای Unibet و صفحات جدول‌دار TJK / اسبدوانی، دکمه «مرورگر سایت» را بزنید و داخل صفحه دکمه استخراج را لمس کنید.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary
-                    )
+                    Text("برای Unibet و صفحات جدول‌دار TJK / اسبدوانی، دکمه «مرورگر سایت» را بزنید و داخل صفحه دکمه استخراج را لمس کنید.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                }
+            }
+        }
+
+        if (state.raceSections.size > 1) {
+            Column {
+                Text("انتخاب کورس / دورِ پیداشده:", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(4.dp))
+                Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    state.raceSections.forEachIndexed { idx, sec ->
+                        FilterChip(
+                            selected = state.selectedSectionIndex == idx,
+                            onClick = { viewModel.selectRaceSection(idx) },
+                            label = { Text(sec.label) }
+                        )
+                    }
                 }
             }
         }
@@ -264,22 +244,14 @@ private fun PredictTab(state: MainUiState, viewModel: MainViewModel) {
         if (state.discoveredLinks.isNotEmpty()) {
             Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 state.discoveredLinks.forEach { link ->
-                    AssistChip(
-                        onClick = { viewModel.fetchFromSite(link.url) },
-                        label = { Text(link.title) },
-                        leadingIcon = { Icon(Icons.Default.Link, contentDescription = null) }
-                    )
+                    AssistChip(onClick = { viewModel.fetchFromSite(link.url) }, label = { Text(link.title) }, leadingIcon = { Icon(Icons.Default.Link, contentDescription = null) })
                 }
             }
         }
 
         OutlinedCard(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(12.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().clickable { showRawData = !showRawData },
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+                Row(modifier = Modifier.fillMaxWidth().clickable { showRawData = !showRawData }, horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Text("داده‌های استخراج‌شده (${state.raceDataInput.length} کاراکتر)", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                     Icon(if (showRawData) Icons.Default.ExpandLess else Icons.Default.ExpandMore, contentDescription = null)
                 }
@@ -294,52 +266,28 @@ private fun PredictTab(state: MainUiState, viewModel: MainViewModel) {
                             Spacer(Modifier.width(6.dp))
                             Text("چسباندن متن")
                         }
-                        if (state.raceDataInput.isNotEmpty()) {
-                            TextButton(onClick = { viewModel.updateRaceDataInput("") }) { Text("پاک کردن") }
-                        }
+                        if (state.raceDataInput.isNotEmpty()) TextButton(onClick = { viewModel.updateRaceDataInput("") }) { Text("پاک کردن") }
                     }
                     Spacer(Modifier.height(6.dp))
-                    OutlinedTextField(
-                        value = state.raceDataInput,
-                        onValueChange = { viewModel.updateRaceDataInput(it) },
-                        label = { Text("جدول اسب‌ها...") },
-                        minLines = 4,
-                        maxLines = 8,
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    OutlinedTextField(value = state.raceDataInput, onValueChange = { viewModel.updateRaceDataInput(it) }, label = { Text("جدول اسب‌ها...") }, minLines = 4, maxLines = 8, modifier = Modifier.fillMaxWidth())
                 }
             }
         }
 
         OutlinedCard(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(12.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().clickable { showNotes = !showNotes },
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+                Row(modifier = Modifier.fillMaxWidth().clickable { showNotes = !showNotes }, horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Text("یادداشت شرایط پیست یا اخبار (اختیاری)", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                     Icon(if (showNotes) Icons.Default.ExpandLess else Icons.Default.ExpandMore, contentDescription = null)
                 }
                 if (showNotes || state.newsNotesInput.isNotBlank()) {
                     Spacer(Modifier.height(6.dp))
-                    OutlinedTextField(
-                        value = state.newsNotesInput,
-                        onValueChange = { viewModel.updateNewsNotes(it) },
-                        label = { Text("مثلاً: پیست گل‌آلود است، اسب ۴ آماده به نظر می‌رسد...") },
-                        minLines = 2,
-                        maxLines = 3,
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    OutlinedTextField(value = state.newsNotesInput, onValueChange = { viewModel.updateNewsNotes(it) }, label = { Text("مثلاً: پیست گل‌آلود است...") }, minLines = 2, maxLines = 3, modifier = Modifier.fillMaxWidth())
                 }
             }
         }
 
-        Button(
-            onClick = { viewModel.analyzeCurrentRace() },
-            enabled = !state.isAnalyzing && state.raceDataInput.isNotBlank(),
-            modifier = Modifier.fillMaxWidth().height(52.dp)
-        ) {
+        Button(onClick = { viewModel.analyzeCurrentRace() }, enabled = !state.isAnalyzing && state.raceDataInput.isNotBlank(), modifier = Modifier.fillMaxWidth().height(52.dp)) {
             Icon(Icons.Default.BarChart, contentDescription = null)
             Spacer(Modifier.width(8.dp))
             Text("شروع تحلیل کمی پیشرفته (فوری)", fontWeight = FontWeight.Bold)
@@ -362,11 +310,7 @@ private fun PredictTab(state: MainUiState, viewModel: MainViewModel) {
 
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
-private fun LiveBrowserTab(
-    initialUrl: String,
-    onUrlChanged: (String) -> Unit,
-    onExtractAndPredict: (title: String, url: String, extractedText: String) -> Unit
-) {
+private fun LiveBrowserTab(initialUrl: String, onUrlChanged: (String) -> Unit, onExtractAndPredict: (title: String, url: String, extractedText: String) -> Unit) {
     var webView by remember { mutableStateOf<WebView?>(null) }
     var currentUrl by remember { mutableStateOf(initialUrl.ifBlank { "https://asbdavani.app/racecards" }) }
     var urlBarText by remember { mutableStateOf(currentUrl) }
@@ -384,39 +328,20 @@ private fun LiveBrowserTab(
     Box(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
             Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = { if (webView?.canGoBack() == true) webView?.goBack() }) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "عقب")
-                }
-                IconButton(onClick = { webView?.reload() }) {
-                    Icon(Icons.Default.Refresh, contentDescription = "رفرش")
-                }
-                OutlinedTextField(
-                    value = urlBarText,
-                    onValueChange = { urlBarText = it },
-                    singleLine = true,
-                    placeholder = { Text("آدرس سایت...") },
-                    modifier = Modifier.weight(1f)
-                )
+                IconButton(onClick = { if (webView?.canGoBack() == true) webView?.goBack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "عقب") }
+                IconButton(onClick = { webView?.reload() }) { Icon(Icons.Default.Refresh, contentDescription = "رفرش") }
+                OutlinedTextField(value = urlBarText, onValueChange = { urlBarText = it }, singleLine = true, placeholder = { Text("آدرس سایت...") }, modifier = Modifier.weight(1f))
                 Spacer(Modifier.width(4.dp))
                 TextButton(onClick = { navigateTo(urlBarText) }) { Text("برو", fontWeight = FontWeight.Bold) }
             }
 
-            Row(
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp, vertical = 2.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
+            Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp, vertical = 2.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 QUICK_SITES.forEach { (label, siteUrl) ->
-                    FilterChip(
-                        selected = currentUrl.contains(siteUrl.removePrefix("https://").substringBefore("/")),
-                        onClick = { navigateTo(siteUrl) },
-                        label = { Text(label) }
-                    )
+                    FilterChip(selected = currentUrl.contains(siteUrl.removePrefix("https://").substringBefore("/")), onClick = { navigateTo(siteUrl) }, label = { Text(label) })
                 }
             }
 
-            if (progress in 1..99) {
-                LinearProgressIndicator(progress = { progress / 100f }, modifier = Modifier.fillMaxWidth())
-            }
+            if (progress in 1..99) LinearProgressIndicator(progress = { progress / 100f }, modifier = Modifier.fillMaxWidth())
 
             AndroidView(
                 modifier = Modifier.fillMaxSize(),
@@ -428,15 +353,10 @@ private fun LiveBrowserTab(
                         settings.domStorageEnabled = true
                         settings.loadWithOverviewMode = true
                         settings.useWideViewPort = true
-                        settings.userAgentString =
-                            "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36"
+                        settings.userAgentString = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36"
                         webViewClient = object : WebViewClient() {
                             override fun onPageFinished(view: WebView?, url: String?) {
-                                if (!url.isNullOrBlank()) {
-                                    currentUrl = url
-                                    urlBarText = url
-                                    onUrlChanged(url)
-                                }
+                                if (!url.isNullOrBlank()) { currentUrl = url; urlBarText = url; onUrlChanged(url) }
                                 if (!view?.title.isNullOrBlank()) currentTitle = view?.title.orEmpty()
                             }
                         }
@@ -462,17 +382,19 @@ private fun LiveBrowserTab(
                             parts.push("--- جدول " + (idx + 1) + " ---");
                             table.querySelectorAll("tr").forEach(function(row) {
                                 var cells = [];
+                                var hasText = false;
                                 row.querySelectorAll("th, td").forEach(function(cell) {
-                                    var t = (cell.innerText || "").replace(/\s+/g, " ").trim();
-                                    if (t) cells.push(t);
+                                    var t = (cell.innerText || "").trim().replace(/\n+/g, " · ").replace(/[ \t]+/g, " ");
+                                    if (t) hasText = true;
+                                    cells.push(t || " ");
                                 });
-                                if (cells.length > 0) parts.push(cells.join(" | "));
+                                if (cells.length > 0 && hasText) parts.push(cells.join(" | "));
                             });
                         });
                         var bodyText = (document.body.innerText || "").replace(/\n{3,}/g, "\n\n").trim();
                         parts.push("--- متن صفحه ---");
                         parts.push(bodyText);
-                        return parts.join("\n").slice(0, 28000);
+                        return parts.join("\n").slice(0, 45000);
                     })();
                 """.trimIndent()
 
@@ -496,7 +418,6 @@ private fun HistoryTab(state: MainUiState, viewModel: MainViewModel) {
         }
         return
     }
-
     LazyColumn(modifier = Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         items(state.history, key = { it.id }) { item ->
             OutlinedCard(modifier = Modifier.fillMaxWidth().clickable { viewModel.openHistoryItem(item) }) {
@@ -513,9 +434,7 @@ private fun HistoryTab(state: MainUiState, viewModel: MainViewModel) {
                         Spacer(Modifier.height(2.dp))
                         Text(item.timestamp, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    IconButton(onClick = { viewModel.deleteHistoryItem(item.id) }) {
-                        Icon(Icons.Default.Delete, contentDescription = "حذف")
-                    }
+                    IconButton(onClick = { viewModel.deleteHistoryItem(item.id) }) { Icon(Icons.Default.Delete, contentDescription = "حذف") }
                 }
             }
         }
@@ -527,10 +446,7 @@ private fun CalibrationTab(state: MainUiState, viewModel: MainViewModel) {
     var w by remember(state.weights) { mutableStateOf(state.weights) }
     var selectedRisk by remember(state.riskProfile) { mutableStateOf(state.riskProfile) }
 
-    Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(14.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
-    ) {
+    Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(14.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         ElevatedCard(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(14.dp)) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -553,10 +469,7 @@ private fun CalibrationTab(state: MainUiState, viewModel: MainViewModel) {
             }
         }
 
-        ElevatedCard(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
-        ) {
+        ElevatedCard(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
             Column(modifier = Modifier.padding(14.dp)) {
                 Text("📊 آمار دقت موتور خودآموز", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(6.dp))
@@ -572,9 +485,7 @@ private fun CalibrationTab(state: MainUiState, viewModel: MainViewModel) {
         ElevatedCard(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(14.dp)) {
                 Text("🎛 تنظیم وزن فاکتورهای مدل", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                Text("این وزن‌ها با ثبت نتیجه هر کورس خودکار اصلاح می‌شوند، ولی دستی هم قابل تغییرند:", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(8.dp))
-
                 WeightSliderRow("فرم و رتبه‌های اخیر", w.formWeight) { w = w.copy(formWeight = it) }
                 WeightSliderRow("سرعت و بهترین تایم", w.speedWeight) { w = w.copy(speedWeight = it) }
                 WeightSliderRow("ریتینگ (HP / IOR)", w.ratingWeight) { w = w.copy(ratingWeight = it) }
@@ -582,10 +493,7 @@ private fun CalibrationTab(state: MainUiState, viewModel: MainViewModel) {
                 WeightSliderRow("آمادگی و استراحت (KGS)", w.freshnessWeight) { w = w.copy(freshnessWeight = it) }
                 WeightSliderRow("دپار نسبی (draw_pct)", w.drawWeight) { w = w.copy(drawWeight = it) }
                 WeightSliderRow("سیگنال بازار (AGF / ضریب)", w.marketWeight) { w = w.copy(marketWeight = it) }
-
-                TextButton(onClick = { viewModel.resetWeights() }) {
-                    Text("بازنشانی وزن‌ها به حالت استاندارد")
-                }
+                TextButton(onClick = { viewModel.resetWeights() }) { Text("بازنشانی وزن‌ها به حالت استاندارد") }
             }
         }
 
@@ -603,10 +511,7 @@ private fun CalibrationTab(state: MainUiState, viewModel: MainViewModel) {
             }
         }
 
-        Button(
-            onClick = { viewModel.saveCalibration(w, selectedRisk) },
-            modifier = Modifier.fillMaxWidth().height(50.dp)
-        ) {
+        Button(onClick = { viewModel.saveCalibration(w, selectedRisk) }, modifier = Modifier.fillMaxWidth().height(50.dp)) {
             Text("ذخیره تنظیمات کالیبراسیون", fontWeight = FontWeight.Bold)
         }
     }
@@ -619,10 +524,6 @@ private fun WeightSliderRow(label: String, value: Double, onValueChange: (Double
             Text(label, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
             Text(String.format(Locale.US, "%.2f", value), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
         }
-        Slider(
-            value = value.toFloat().coerceIn(0.25f, 2.5f),
-            onValueChange = { onValueChange(it.toDouble()) },
-            valueRange = 0.25f..2.5f
-        )
+        Slider(value = value.toFloat().coerceIn(0.25f, 2.5f), onValueChange = { onValueChange(it.toDouble()) }, valueRange = 0.25f..2.5f)
     }
 }
