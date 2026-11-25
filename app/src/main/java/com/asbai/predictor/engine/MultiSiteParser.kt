@@ -9,6 +9,11 @@ data class ParsedRaceContext(
     val horses: List<ParsedHorseRow>
 )
 
+data class RaceSection(
+    val label: String,
+    val rawChunk: String
+)
+
 object MultiSiteParser {
 
     private val formRegex = Regex("""(\d+)\s*-\s*(\d+)\s*-\s*(\d+)\s*/\s*(\d+)""")
@@ -21,8 +26,47 @@ object MultiSiteParser {
         "win", "place", "show", "each way", "ew", "sp", "nr", "non-runner",
         "non runner", "uitgeschakeld", "voorspelling", "wedden", "odds", "form",
         "live", "info", "stats", "results", "racecard", "unibet", "paardenraces",
-        "favoriet", "race", "races", "all", "today", "tomorrow", "cet", "gmt", "bst"
+        "favoriet", "race", "races", "all", "today", "tomorrow", "cet", "gmt", "bst",
+        "vandaag", "morgen", "starttijd", "afstand", "lopers", "plaats", "winst"
     )
+
+    fun splitRaceSections(rawText: String): List<RaceSection> {
+        val ascii = toAsciiDigits(rawText)
+        val lines = ascii.lines()
+        val sections = mutableListOf<RaceSection>()
+        val headerIndices = mutableListOf<Int>()
+
+        for (i in lines.indices) {
+            val ln = lines[i]
+            if (ln.contains("|")) {
+                val cells = ln.split("|").map { it.trim() }
+                val isTjkHeader = cells.any { Regex("""at\s*[iİı]sm[iİı]""", RegexOption.IGNORE_CASE).containsMatchIn(it) } &&
+                    cells.any { Regex("""jokey""", RegexOption.IGNORE_CASE).containsMatchIn(it) }
+                val isAsbHeader = cells.any { it.contains("اسب") } &&
+                    cells.any { it.contains("عملکرد") || it.contains("مربی") || it.contains("دپار") }
+                if (isTjkHeader || isAsbHeader) {
+                    headerIndices.add(i)
+                }
+            }
+        }
+
+        if (headerIndices.size <= 1) return emptyList()
+
+        for (k in headerIndices.indices) {
+            val start = maxOf(0, headerIndices[k] - 6)
+            val end = if (k + 1 < headerIndices.size) maxOf(start + 1, headerIndices[k + 1] - 6) else lines.size
+            val chunk = lines.subList(start, end).joinToString("\n")
+            val kosuMatch = Regex("""(\d+)\.\s*Ko[sş]u""", RegexOption.IGNORE_CASE).find(chunk)
+            val dorMatch = Regex("""دور\s*(\d+)""").find(chunk)
+            val label = when {
+                kosuMatch != null -> "دور ${kosuMatch.groupValues[1]}"
+                dorMatch != null -> "دور ${dorMatch.groupValues[1]}"
+                else -> "کورس ${k + 1}"
+            }
+            sections.add(RaceSection(label = label, rawChunk = chunk))
+        }
+        return sections
+    }
 
     fun parse(rawText: String, pageTitle: String, sourceUrl: String): ParsedRaceContext {
         val ascii = toAsciiDigits(rawText)
@@ -122,17 +166,18 @@ object MultiSiteParser {
             }
 
             if (!inTable || idxName < 0 || cells.size <= idxName) continue
-            val rawName = cells[idxName]
-            if (rawName.isBlank() || Regex("""toplam|koşmaz""", RegexOption.IGNORE_CASE).containsMatchIn(rawName)) continue
+            val rawNameCell = cells[idxName]
+            if (rawNameCell.isBlank() || Regex("""toplam|koşmaz|at\s*[iİı]sm""", RegexOption.IGNORE_CASE).containsMatchIn(rawNameCell)) continue
 
-            val numAndName = Regex("""^(\d{1,2})\s*[.\-)]\s*(.+)$""").find(rawName)
-            val number = if (idxNum >= 0 && idxNum < cells.size && cells[idxNum].all { it.isDigit() }) {
+            val firstNameSegment = rawNameCell.split("·").firstOrNull()?.trim().orEmpty()
+            val numAndName = Regex("""^(\d{1,2})\s*[.\-)]\s*(.+)$""").find(firstNameSegment)
+            val number = if (idxNum in cells.indices && Regex("""^\d{1,2}$""").matches(cells[idxNum])) {
                 cells[idxNum]
             } else {
                 numAndName?.groupValues?.get(1) ?: (out.size + 1).toString()
             }
-            val cleanName = (numAndName?.groupValues?.get(2) ?: rawName)
-                .replace(Regex("""\b(KG|DB|SK|K|GKR|YP)\b"""), "")
+            val cleanName = (numAndName?.groupValues?.get(2) ?: firstNameSegment)
+                .replace(Regex("""\b(KG|DB|SK|GKR|YP|ÖG|K)\b"""), "")
                 .replace(Regex("""\s+"""), " ")
                 .trim()
             if (cleanName.length < 2) continue
@@ -165,9 +210,9 @@ object MultiSiteParser {
                     s20Score = s20Val,
                     marketOdds = gnyVal,
                     marketAgfPct = agfVal,
-                    owner = if (idxOwner in cells.indices) cells[idxOwner] else "",
-                    trainer = if (idxTrainer in cells.indices) cells[idxTrainer] else "",
-                    jockey = if (idxJockey in cells.indices) cells[idxJockey] else ""
+                    owner = if (idxOwner in cells.indices) cells[idxOwner].replace("·", " ").trim() else "",
+                    trainer = if (idxTrainer in cells.indices) cells[idxTrainer].replace("·", " ").trim() else "",
+                    jockey = if (idxJockey in cells.indices) cells[idxJockey].replace("·", " ").trim() else ""
                 )
             )
         }
@@ -212,9 +257,11 @@ object MultiSiteParser {
                 ?: Regex("""دپار\s*[:：]?\s*(\d{1,2})""").find(line)?.groupValues?.get(1)?.toIntOrNull()
 
             val horseParts = rawHorseCell.split("·").map { it.trim() }.filter { it.isNotEmpty() }
-            val cleanName = (horseParts.firstOrNull { !it.contains("پیراهن") && !it.contains("شماره") && it.length >= 2 }
-                ?: rawHorseCell)
+            val cleanName = (horseParts.firstOrNull { p ->
+                !p.contains("پیراهن") && !p.contains("شماره") && !p.startsWith("(") && p.length >= 2
+            } ?: rawHorseCell)
                 .replace(Regex("""پیراهن\s*شماره\s*\d+"""), "")
+                .replace(Regex("""\([^)]*\)"""), "")
                 .trim()
             if (cleanName.length < 2) continue
 
@@ -290,7 +337,6 @@ object MultiSiteParser {
         return out
     }
 
-    // برای حالت کارت موبایلی asbdavani.app (وقتی بدون table رندر می‌شود)
     private fun parseAsbdavaniCardBlocks(lines: List<String>): List<ParsedHorseRow> {
         val out = mutableListOf<ParsedHorseRow>()
         var blockStart = 0
@@ -335,26 +381,22 @@ object MultiSiteParser {
         return out
     }
 
-    // برای Unibet و سایت‌هایی که جدول HTML ندارند و خط‌به‌خط رندر می‌شوند
+    // جستجوی رو به بالا از روی هر ضریب (مخصوص Unibet و سایت‌های بدون جدول)
     private fun parseUnibetOrLineBlocks(lines: List<String>): List<ParsedHorseRow> {
         val out = mutableListOf<ParsedHorseRow>()
-        val bodyIdx = lines.indexOfFirst { it.contains("--- متن") || it.contains("متن کامل") }
+        val bodyIdx = lines.indexOfFirst { it.contains("--- متن") || it.contains("متن صفحه") }
         val startIdx = if (bodyIdx >= 0) bodyIdx + 1 else 0
         var blockStart = startIdx
 
         var i = startIdx
         while (i < lines.size) {
-            val line = lines[i]
-            val odds = parseOddsToken(line)
+            val odds = parseOddsToken(lines[i])
             if (odds == null) {
                 i++
                 continue
             }
 
-            val winFrom = maxOf(blockStart, i - 7)
-            val window = lines.subList(winFrom, i)
-            val joined = window.joinToString(" | ")
-
+            val winFrom = maxOf(blockStart, i - 6)
             var number: String? = null
             var gate: Int? = null
             var horseName = ""
@@ -362,43 +404,38 @@ object MultiSiteParser {
             var trainer = ""
             var formStr: String? = null
 
-            for (ln in window) {
-                val trimmed = ln.trim()
+            // حرکت رو به بالا از نزدیک‌ترین خط بالای ضریب تا به تیتر صفحه نخورد
+            for (k in (i - 1) downTo winFrom) {
+                val trimmed = lines[k].trim()
                 if (trimmed.isBlank()) continue
 
-                if (number == null) {
-                    val onlyNum = Regex("""^(\d{1,2})\.?$""").find(trimmed)
-                    if (onlyNum != null) {
-                        number = onlyNum.groupValues[1]
-                        continue
-                    }
-                    val numPrefix = Regex("""^(\d{1,2})[.)]\s+([A-Za-z\u0600-\u06FF].+)$""").find(trimmed)
-                    if (numPrefix != null && horseName.isBlank()) {
-                        number = numPrefix.groupValues[1]
-                        val candidate = cleanCandidateHorseName(numPrefix.groupValues[2])
-                        if (isValidHorseName(candidate)) horseName = candidate
-                        continue
-                    }
-                }
-
-                if (gate == null) {
-                    val gParen = Regex("""^\((\d{1,2})\)$|^(?:Draw|Post|Gate|Box)\s*[:#]?\s*(\d{1,2})$""", RegexOption.IGNORE_CASE).find(trimmed)
-                    if (gParen != null) {
-                        gate = (gParen.groupValues[1].ifBlank { gParen.groupValues[2] }).toIntOrNull()
-                        continue
-                    }
-                }
-
                 if (trimmed.startsWith("J:", true) || trimmed.contains("Jockey", true)) {
-                    jockey = trimmed.replace(Regex("""J:|Jockey:?""", RegexOption.IGNORE_CASE), "").trim()
+                    if (jockey.isBlank()) jockey = trimmed.replace(Regex("""J:|Jockey:?""", RegexOption.IGNORE_CASE), "").trim()
                     continue
                 }
                 if (trimmed.startsWith("T:", true) || trimmed.contains("Trainer", true)) {
-                    trainer = trimmed.replace(Regex("""T:|Trainer:?""", RegexOption.IGNORE_CASE), "").trim()
+                    if (trainer.isBlank()) trainer = trimmed.replace(Regex("""T:|Trainer:?""", RegexOption.IGNORE_CASE), "").trim()
                     continue
                 }
-                if (formStr == null && Regex("""^\d[\d\-/]{2,12}$""").matches(trimmed)) {
-                    formStr = formRegex.find(trimmed)?.value
+                if (Regex("""^\d[\d\-/]{2,12}$""").matches(trimmed)) {
+                    if (formStr == null) formStr = formRegex.find(trimmed)?.value
+                    continue
+                }
+                val gParen = Regex("""^\((\d{1,2})\)$|^(?:Draw|Post|Gate|Box)\s*[:#]?\s*(\d{1,2})$""", RegexOption.IGNORE_CASE).find(trimmed)
+                if (gParen != null) {
+                    if (gate == null) gate = (gParen.groupValues[1].ifBlank { gParen.groupValues[2] }).toIntOrNull()
+                    continue
+                }
+                val onlyNum = Regex("""^(\d{1,2})\.?$""").find(trimmed)
+                if (onlyNum != null) {
+                    if (number == null) number = onlyNum.groupValues[1]
+                    continue
+                }
+                val numPrefix = Regex("""^(\d{1,2})[.)]\s+([A-Za-z\u0600-\u06FF].+)$""").find(trimmed)
+                if (numPrefix != null) {
+                    if (number == null) number = numPrefix.groupValues[1]
+                    val candidate = cleanCandidateHorseName(numPrefix.groupValues[2])
+                    if (horseName.isBlank() && isValidHorseName(candidate)) horseName = candidate
                     continue
                 }
 
@@ -411,6 +448,7 @@ object MultiSiteParser {
             }
 
             if (horseName.isNotBlank() && out.none { it.horseName.equals(horseName, ignoreCase = true) }) {
+                val joined = lines.subList(winFrom, i).joinToString(" | ")
                 out.add(
                     ParsedHorseRow(
                         number = number ?: (out.size + 1).toString(),
@@ -424,7 +462,6 @@ object MultiSiteParser {
                     )
                 )
                 blockStart = i + 1
-                // اگر بلافاصله زیر ضریب برد، ضریب سکو هم آمده بود ازش رد شو
                 if (i + 1 < lines.size && parseOddsToken(lines[i + 1]) != null) {
                     i++
                 }
@@ -466,6 +503,7 @@ object MultiSiteParser {
         if (lower in noiseWords) return false
         if (lower.startsWith("cet ") || lower.startsWith("gmt ") || lower.startsWith("http")) return false
         if (s.contains("آدرس:") || s.contains("عنوان:") || s.contains("---")) return false
+        if (Regex("""\b\d{3,4}\s*m\b""", RegexOption.IGNORE_CASE).containsMatchIn(s)) return false
         if (!Regex("""[A-Za-z\u0600-\u06FF]{2,}""").containsMatchIn(s)) return false
         if (Regex("""^\d[\d\s.,:/\-()]+$""").matches(s)) return false
         return true
