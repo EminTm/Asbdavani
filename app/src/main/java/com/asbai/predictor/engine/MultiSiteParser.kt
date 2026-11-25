@@ -1,6 +1,7 @@
 package com.asbai.predictor.engine
 
 import com.asbai.predictor.model.ParsedHorseRow
+import kotlin.math.roundToInt
 
 data class ParsedRaceContext(
     val raceTitle: String,
@@ -19,15 +20,18 @@ object MultiSiteParser {
     private val formRegex = Regex("""(\d+)\s*-\s*(\d+)\s*-\s*(\d+)\s*/\s*(\d+)""")
     private val agfRegex = Regex("""%\s*(\d+(?:\.\d+)?)|(\d+(?:\.\d+)?)\s*%""")
     private val timeDotRegex = Regex("""\b(\d)\.(\d{2})\.(\d{2})\b""")
-    private val weightRegex = Regex("""\b(4[5-9]|5[0-9]|6[0-5])(?:\.(\d))?\b""")
-    private val distRegex = Regex("""(\d{3,4})\s*(?:متر|m\.?)?\s*(چمن|خاکی|سنتتیک|Çim|Kum|Sentetik|Dirt|Turf|AW)?""", RegexOption.IGNORE_CASE)
+    private val weightKgRegex = Regex("""\b(4[5-9]|5[0-9]|6[0-5])(?:\.(\d))?\b""")
+    private val weightStoneRegex = Regex("""(\d{1,2})\s*st\s*(\d{1,2})\s*lbs""", RegexOption.IGNORE_CASE)
+    private val distMetricRegex = Regex("""(\d{3,4})\s*(?:متر|m\.?)?\s*(چمن|خاکی|سنتتیک|Çim|Kum|Sentetik|Dirt|Turf|AW)?""", RegexOption.IGNORE_CASE)
+    private val unibetHeaderRegex = Regex("""^(\d{1,2})\s*\((\d{1,2})?\)\s+([A-Za-z0-9'’.\- ]{2,45})$""")
+    private val unibetFormRegex = Regex("""^[0-9XPFRUBxpfrub]{1,10}$""")
 
     private val noiseWords = setOf(
-        "win", "place", "show", "each way", "ew", "nr", "non-runner",
+        "win", "place", "show", "each way", "ew", "sp", "nr", "non-runner",
         "non runner", "uitgeschakeld", "voorspelling", "wedden", "odds", "form",
         "live", "info", "stats", "results", "racecard", "unibet", "paardenraces",
         "favoriet", "race", "races", "all", "today", "tomorrow", "cet", "gmt", "bst",
-        "vandaag", "morgen", "starttijd", "afstand", "lopers", "plaats", "winst"
+        "vandaag", "morgen", "starttijd", "afstand", "lopers", "plaats", "winst", "prijs"
     )
 
     fun splitRaceSections(rawText: String): List<RaceSection> {
@@ -44,9 +48,7 @@ object MultiSiteParser {
                     cells.any { Regex("""jokey""", RegexOption.IGNORE_CASE).containsMatchIn(it) }
                 val isAsbHeader = cells.any { it.contains("اسب") } &&
                     cells.any { it.contains("عملکرد") || it.contains("مربی") || it.contains("دپار") }
-                if (isTjkHeader || isAsbHeader) {
-                    headerIndices.add(i)
-                }
+                if (isTjkHeader || isAsbHeader) headerIndices.add(i)
             }
         }
 
@@ -72,27 +74,28 @@ object MultiSiteParser {
         val ascii = toAsciiDigits(rawText)
         val lines = ascii.lines().map { it.trim() }.filter { it.isNotEmpty() }
 
-        var distMeters: Int? = null
+        var distMeters: Int? = parseImperialDistance(lines)
         var surface = ""
-        for (line in lines.take(55)) {
-            val dm = distRegex.find(line)
-            if (dm != null) {
-                val d = dm.groupValues[1].toIntOrNull()
-                if (d != null && d in 800..4500) {
-                    distMeters = d
-                    val sRaw = dm.groupValues[2].lowercase()
-                    surface = when {
-                        "çim" in sRaw || "چمن" in sRaw || "turf" in sRaw -> "چمن"
-                        "kum" in sRaw || "خاکی" in sRaw || "dirt" in sRaw -> "خاکی"
-                        "sentetik" in sRaw || "سنتتیک" in sRaw || "aw" in sRaw -> "سنتتیک"
-                        else -> ""
-                    }
-                    break
+        for (line in lines.take(60)) {
+            if (distMeters == null) {
+                val dm = distMetricRegex.find(line)
+                val d = dm?.groupValues?.get(1)?.toIntOrNull()
+                if (d != null && d in 800..4500) distMeters = d
+            }
+            val lower = line.lowercase()
+            if (surface.isBlank()) {
+                surface = when {
+                    "çim" in lower || "چمن" in lower || "turf" in lower -> "چمن"
+                    "kum" in lower || "خاکی" in lower || "dirt" in lower -> "خاکی"
+                    "sentetik" in lower || "سنتتیک" in lower -> "سنتتیک"
+                    else -> ""
                 }
             }
+            if (distMeters != null && surface.isNotBlank()) break
         }
 
         val candidates = listOf(
+            parseUnibetFrankelCards(lines),
             parseTjkTables(lines),
             parseAsbdavaniTables(lines),
             parseGenericRows(lines),
@@ -103,15 +106,131 @@ object MultiSiteParser {
         val horses = (candidates.maxByOrNull { it.size }.orEmpty())
             .distinctBy { "${it.number}:${it.horseName.lowercase()}" }
 
-        val cleanTitle = pageTitle.ifBlank {
+        val cleanTitle = extractRaceHeading(lines) ?: pageTitle.ifBlank {
             when {
                 "tjk.org" in sourceUrl -> "مسابقات ترکیه (TJK)"
-                "unibet" in sourceUrl -> "مسابقات اروپا (Unibet)"
+                "unibet" in sourceUrl -> "مسابقات اروپا/آمریکا (Unibet)"
                 else -> "مسابقات اسبدوانی"
             }
         }
 
         return ParsedRaceContext(cleanTitle, distMeters, surface, horses)
+    }
+
+    // پارسر اختصاصی Unibet (فرمت دقیق مثل 4 (4) Noble Glow / JJose L. Ortiz / TChad C. Brown / G8st 9lbs)
+    private fun parseUnibetFrankelCards(lines: List<String>): List<ParsedHorseRow> {
+        val headerIndices = lines.indices.filter { unibetHeaderRegex.matches(lines[it]) }
+        if (headerIndices.size < 2) return emptyList()
+
+        val footerIdx = lines.indexOfFirst {
+            it.startsWith("Weergave odds", true) || it.startsWith("Wat kost gokken", true)
+        }.takeIf { it > 0 } ?: lines.size
+
+        val out = mutableListOf<ParsedHorseRow>()
+        for (hPos in headerIndices.indices) {
+            val idx = headerIndices[hPos]
+            if (idx >= footerIdx) break
+
+            val hm = unibetHeaderRegex.find(lines[idx]) ?: continue
+            val number = hm.groupValues[1]
+            val gate = hm.groupValues[2].toIntOrNull()
+            val horseName = hm.groupValues[3].trim()
+            if (horseName.length < 2) continue
+
+            // فرم کورس‌های اخیر دقیقاً یک خط بالای اسم اسب است (مثل 6X272 یا 30322 یا 7)
+            val recentDigits = if (idx - 1 >= 0 && unibetFormRegex.matches(lines[idx - 1])) {
+                lines[idx - 1].map { ch ->
+                    when {
+                        ch == '0' -> 10
+                        ch.isDigit() -> ch.digitToInt()
+                        else -> 9 // X, P, F, U, R
+                    }
+                }
+            } else emptyList()
+
+            val nextIdx = headerIndices.getOrNull(hPos + 1)?.let { minOf(it, footerIdx) } ?: footerIdx
+            var jockey = ""
+            var trainer = ""
+            var weightKg: Double? = null
+            var lastOdds: Double? = null
+
+            for (k in (idx + 1) until nextIdx) {
+                val ln = lines[k]
+                if (ln.startsWith("Weergave odds", true) || ln.startsWith("WIN/", true)) break
+
+                // خط چابکسوار مثل JJose L. Ortiz یا JYomar Ortiz, Jr. (3.2) 8st 2lbs
+                if (jockey.isBlank() && Regex("""^J[A-Z]""").containsMatchIn(ln)) {
+                    jockey = ln.substring(1)
+                        .replace(Regex("""\(\d+(?:\.\d+)?\).*$"""), "")
+                        .replace(weightStoneRegex, "")
+                        .trim()
+                }
+                // خط مربی مثل TChad C. Brown
+                if (trainer.isBlank() && Regex("""^T[A-Z]""").containsMatchIn(ln)) {
+                    trainer = ln.substring(1).trim()
+                }
+                // وزن مثل G8st 9lbs یا 8st 2lbs
+                val sw = weightStoneRegex.find(ln)
+                if (weightKg == null && sw != null) {
+                    val stones = sw.groupValues[1].toDoubleOrNull() ?: 0.0
+                    val lbs = sw.groupValues[2].toDoubleOrNull() ?: 0.0
+                    val kg = ((stones * 14.0 + lbs) * 0.45359237 * 10.0).roundToInt() / 10.0
+                    if (kg in 40.0..75.0) weightKg = kg
+                }
+                // ضرایب (چند ضریب پشت‌سرهم می‌آیند؛ آخری ضریب زنده فعلی است)
+                val od = parseOddsToken(ln)
+                if (od != null && od > 1.0) {
+                    lastOdds = od
+                }
+            }
+
+            out.add(
+                ParsedHorseRow(
+                    number = number,
+                    gate = gate,
+                    horseName = horseName,
+                    weightKg = weightKg,
+                    recentDigits = recentDigits,
+                    marketOdds = lastOdds,
+                    trainer = trainer,
+                    jockey = jockey
+                )
+            )
+        }
+        return out
+    }
+
+    private fun extractRaceHeading(lines: List<String>): String? {
+        val raceLine = lines.firstOrNull { Regex("""^Race\s+\d+""", RegexOption.IGNORE_CASE).containsMatchIn(it) }
+        val trackLine = lines.firstOrNull {
+            val idx = lines.indexOf(it)
+            idx > 0 && lines.getOrNull(idx + 1)?.startsWith("Race ", true) == true && it.length in 3..40
+        }
+        return when {
+            trackLine != null && raceLine != null -> "$trackLine — $raceLine"
+            raceLine != null -> raceLine
+            else -> null
+        }
+    }
+
+    private fun parseImperialDistance(lines: List<String>): Int? {
+        for (ln in lines.take(65)) {
+            val miMatch = Regex("""(\d+)\s*mi(?:les?)?\s*(?:(\d+)\s*f)?\s*(?:(\d+)\s*y)?""", RegexOption.IGNORE_CASE).find(ln)
+            if (miMatch != null) {
+                val mi = miMatch.groupValues[1].toDoubleOrNull() ?: 0.0
+                val f = miMatch.groupValues[2].toDoubleOrNull() ?: 0.0
+                val y = miMatch.groupValues[3].toDoubleOrNull() ?: 0.0
+                val total = (mi * 1609.34 + f * 201.168 + y * 0.9144).roundToInt()
+                if (total in 700..5000) return total
+            }
+            val furMatch = Regex("""\b(\d+)\s*f\b""", RegexOption.IGNORE_CASE).find(ln)
+            if (furMatch != null) {
+                val f = furMatch.groupValues[1].toDoubleOrNull() ?: 0.0
+                val total = (f * 201.168).roundToInt()
+                if (total in 700..5000) return total
+            }
+        }
+        return null
     }
 
     private fun parseTjkTables(lines: List<String>): List<ParsedHorseRow> {
@@ -235,7 +354,7 @@ object MultiSiteParser {
 
             val statsText = cells.getOrNull(idxStats).orEmpty()
             val weight = Regex("""(\d{2}(?:\.\d)?)\s*(?:کیلو|kg)?""").find(statsText)?.groupValues?.get(1)?.toDoubleOrNull()
-                ?: weightRegex.find(statsText)?.value?.toDoubleOrNull()
+                ?: weightKgRegex.find(statsText)?.value?.toDoubleOrNull()
             val ior = Regex("""IOR\s*[:：]?\s*(\d{1,3})""", RegexOption.IGNORE_CASE).find(statsText)?.groupValues?.get(1)?.toDoubleOrNull()
                 ?: Regex("""\b(\d{1,3})\s*$""").find(statsText)?.groupValues?.get(1)?.toDoubleOrNull()?.takeIf { it in 10.0..140.0 }
 
@@ -282,12 +401,11 @@ object MultiSiteParser {
             }.orEmpty().take(36)
             if (horseName.isBlank()) continue
 
-            out.add(ParsedHorseRow(number = number, horseName = horseName, weightKg = weightRegex.find(noForm)?.value?.toDoubleOrNull(), formString = formStr, marketOdds = decOdds, marketAgfPct = agfVal))
+            out.add(ParsedHorseRow(number = number, horseName = horseName, weightKg = weightKgRegex.find(noForm)?.value?.toDoubleOrNull(), formString = formStr, marketOdds = decOdds, marketAgfPct = agfVal))
         }
         return out
     }
 
-    // برای کارت‌های موبایلی asbdavani (حتی برای اسب‌های بدون استارت قبلی)
     private fun parseAsbdavaniCardBlocks(lines: List<String>): List<ParsedHorseRow> {
         val out = mutableListOf<ParsedHorseRow>()
         var blockStart = 0
@@ -333,7 +451,6 @@ object MultiSiteParser {
         return out
     }
 
-    // جستجوی رو به بالا از روی هر ضریب (Unibet با ۱ یا ۲ رقم اعشار و SP)
     private fun parseUnibetOrLineBlocks(lines: List<String>): List<ParsedHorseRow> {
         val out = mutableListOf<ParsedHorseRow>()
         val bodyIdx = lines.indexOfFirst { it.contains("--- متن") || it.contains("متن صفحه") }
@@ -356,22 +473,12 @@ object MultiSiteParser {
             for (k in (i - 1) downTo winFrom) {
                 val trimmed = lines[k].trim()
                 if (trimmed.isBlank()) continue
-
-                if (trimmed.startsWith("J:", true) || trimmed.contains("Jockey", true)) {
-                    if (jockey.isBlank()) jockey = trimmed.replace(Regex("""J:|Jockey:?""", RegexOption.IGNORE_CASE), "").trim()
+                if (trimmed.startsWith("J", true) && trimmed.length > 2 && trimmed[1].isUpperCase()) {
+                    if (jockey.isBlank()) jockey = trimmed.substring(1).trim()
                     continue
                 }
-                if (trimmed.startsWith("T:", true) || trimmed.contains("Trainer", true)) {
-                    if (trainer.isBlank()) trainer = trimmed.replace(Regex("""T:|Trainer:?""", RegexOption.IGNORE_CASE), "").trim()
-                    continue
-                }
-                if (Regex("""^\d[\d\-/]{2,12}$""").matches(trimmed)) {
-                    if (formStr == null) formStr = formRegex.find(trimmed)?.value
-                    continue
-                }
-                val gParen = Regex("""^\((\d{1,2})\)$|^(?:Draw|Post|Gate|Box)\s*[:#]?\s*(\d{1,2})$""", RegexOption.IGNORE_CASE).find(trimmed)
-                if (gParen != null) {
-                    if (gate == null) gate = (gParen.groupValues[1].ifBlank { gParen.groupValues[2] }).toIntOrNull()
+                if (trimmed.startsWith("T", true) && trimmed.length > 2 && trimmed[1].isUpperCase()) {
+                    if (trainer.isBlank()) trainer = trimmed.substring(1).trim()
                     continue
                 }
                 val onlyNum = Regex("""^(\d{1,2})\.?$""").find(trimmed)
@@ -379,14 +486,6 @@ object MultiSiteParser {
                     if (number == null) number = onlyNum.groupValues[1]
                     continue
                 }
-                val numPrefix = Regex("""^(\d{1,2})[.)]\s+([A-Za-z\u0600-\u06FF].+)$""").find(trimmed)
-                if (numPrefix != null) {
-                    if (number == null) number = numPrefix.groupValues[1]
-                    val candidate = cleanCandidateHorseName(numPrefix.groupValues[2])
-                    if (horseName.isBlank() && isValidHorseName(candidate)) horseName = candidate
-                    continue
-                }
-
                 if (horseName.isBlank()) {
                     val candidate = cleanCandidateHorseName(trimmed)
                     if (isValidHorseName(candidate)) horseName = candidate
@@ -400,7 +499,7 @@ object MultiSiteParser {
                         number = number ?: (out.size + 1).toString(),
                         gate = gate,
                         horseName = horseName.take(36),
-                        weightKg = weightRegex.find(joined)?.value?.toDoubleOrNull(),
+                        weightKg = weightKgRegex.find(joined)?.value?.toDoubleOrNull(),
                         formString = formStr,
                         marketOdds = odds.takeIf { it > 1.0 },
                         trainer = trainer,
@@ -408,7 +507,7 @@ object MultiSiteParser {
                     )
                 )
                 blockStart = i + 1
-                if (i + 1 < lines.size && parseOddsToken(lines[i + 1]) != null) i++
+                while (i + 1 < lines.size && parseOddsToken(lines[i + 1]) != null) i++
             }
             i++
         }
@@ -464,6 +563,7 @@ object MultiSiteParser {
         val sb = StringBuilder(input.length)
         for (ch in input) {
             when (ch) {
+                '\u00A0' -> sb.append(' ')
                 in '۰'..'۹' -> sb.append(('0'.code + (ch.code - '۰'.code)).toChar())
                 in '٠'..'٩' -> sb.append(('0'.code + (ch.code - '٠'.code)).toChar())
                 else -> sb.append(ch)
