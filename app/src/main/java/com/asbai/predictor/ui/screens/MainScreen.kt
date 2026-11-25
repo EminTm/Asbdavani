@@ -1,6 +1,7 @@
 package com.asbai.predictor.ui.screens
 
 import android.annotation.SuppressLint
+import android.graphics.Bitmap
 import android.webkit.CookieManager
 import android.webkit.WebChromeClient
 import android.webkit.WebView
@@ -91,6 +92,52 @@ private val QUICK_SITES = listOf(
     "🇹🇷 TJK ترکیه" to "https://www.tjk.org/TR/YarisSever/Info/Page/GunlukYarisProgrami",
     "🇳🇱 Unibet" to "https://www.unibet.nl/betting/racing"
 )
+
+private val SNIFFER_JS = """
+    (function() {
+        if (window.__raceSnifferInstalled) return;
+        window.__raceSnifferInstalled = true;
+        window.__capturedRacePayloads = [];
+        function maybeSave(url, text) {
+            try {
+                if (!text || text.length < 80 || text.length > 350000) return;
+                var lower = text.toLowerCase();
+                if (lower.indexOf("horse") !== -1 || lower.indexOf("runner") !== -1 ||
+                    lower.indexOf("jockey") !== -1 || lower.indexOf("outcomes") !== -1 ||
+                    lower.indexOf("betoffers") !== -1 || lower.indexOf("اسب") !== -1 ||
+                    lower.indexOf("چابکسوار") !== -1 || lower.indexOf("مربی") !== -1) {
+                    window.__capturedRacePayloads.push(text);
+                    if (window.__capturedRacePayloads.length > 8) window.__capturedRacePayloads.shift();
+                }
+            } catch (e) {}
+        }
+        var origFetch = window.fetch;
+        if (origFetch) {
+            window.fetch = function() {
+                var reqUrl = (arguments[0] && arguments[0].url) ? arguments[0].url : String(arguments[0] || "");
+                return origFetch.apply(this, arguments).then(function(res) {
+                    try { res.clone().text().then(function(t) { maybeSave(reqUrl, t); }); } catch (e) {}
+                    return res;
+                });
+            };
+        }
+        var origOpen = XMLHttpRequest.prototype.open;
+        var origSend = XMLHttpRequest.prototype.send;
+        XMLHttpRequest.prototype.open = function(m, u) { this.__reqUrl = u; return origOpen.apply(this, arguments); };
+        XMLHttpRequest.prototype.send = function() {
+            var xhr = this;
+            xhr.addEventListener("load", function() {
+                try {
+                    if (!xhr.responseType || xhr.responseType === "text" || xhr.responseType === "json") {
+                        var txt = typeof xhr.responseText === "string" ? xhr.responseText : JSON.stringify(xhr.response);
+                        maybeSave(xhr.__reqUrl, txt);
+                    }
+                } catch (e) {}
+            });
+            return origSend.apply(this, arguments);
+        };
+    })();
+""".trimIndent()
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -302,7 +349,8 @@ private fun PredictTab(state: MainUiState, viewModel: MainViewModel) {
                         onFailure = { err -> viewModel.showError("خطا در ساخت PDF: ${err.message}") }
                     )
                 },
-                onRecordWinner = { num, name -> viewModel.recordActualWinner(num, name) }
+                onRecordWinner = { num, name -> viewModel.recordActualWinner(num, name) },
+                onToggleScratch = { num, name -> viewModel.toggleScratchHorse(num, name) }
             )
         }
     }
@@ -355,7 +403,11 @@ private fun LiveBrowserTab(initialUrl: String, onUrlChanged: (String) -> Unit, o
                         settings.useWideViewPort = true
                         settings.userAgentString = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36"
                         webViewClient = object : WebViewClient() {
+                            override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+                                view?.evaluateJavascript(SNIFFER_JS, null)
+                            }
                             override fun onPageFinished(view: WebView?, url: String?) {
+                                view?.evaluateJavascript(SNIFFER_JS, null)
                                 if (!url.isNullOrBlank()) { currentUrl = url; urlBarText = url; onUrlChanged(url) }
                                 if (!view?.title.isNullOrBlank()) currentTitle = view?.title.orEmpty()
                             }
@@ -377,24 +429,62 @@ private fun LiveBrowserTab(initialUrl: String, onUrlChanged: (String) -> Unit, o
                         var parts = [];
                         parts.push("عنوان: " + document.title);
                         parts.push("آدرس: " + window.location.href);
-                        var tables = document.querySelectorAll("table");
-                        tables.forEach(function(table, idx) {
-                            parts.push("--- جدول " + (idx + 1) + " ---");
-                            table.querySelectorAll("tr").forEach(function(row) {
-                                var cells = [];
-                                var hasText = false;
-                                row.querySelectorAll("th, td").forEach(function(cell) {
-                                    var t = (cell.innerText || "").trim().replace(/\n+/g, " · ").replace(/[ \t]+/g, " ");
-                                    if (t) hasText = true;
-                                    cells.push(t || " ");
+                        var hasShadow = false;
+                        function collectTables(root) {
+                            root.querySelectorAll("table").forEach(function(table, idx) {
+                                parts.push("--- جدول " + (idx + 1) + " ---");
+                                table.querySelectorAll("tr").forEach(function(row) {
+                                    var cells = [];
+                                    var hasText = false;
+                                    row.querySelectorAll("th, td").forEach(function(cell) {
+                                        var t = (cell.innerText || "").trim().replace(/\n+/g, " · ").replace(/[ \t]+/g, " ");
+                                        if (t) hasText = true;
+                                        cells.push(t || " ");
+                                    });
+                                    if (cells.length > 0 && hasText) parts.push(cells.join(" | "));
                                 });
-                                if (cells.length > 0 && hasText) parts.push(cells.join(" | "));
                             });
-                        });
-                        var bodyText = (document.body.innerText || "").replace(/\n{3,}/g, "\n\n").trim();
+                            root.querySelectorAll("*").forEach(function(el) {
+                                if (el.shadowRoot) {
+                                    hasShadow = true;
+                                    collectTables(el.shadowRoot);
+                                }
+                            });
+                        }
+                        collectTables(document);
+                        function collectDeepText(root) {
+                            var lines = [];
+                            function walk(node) {
+                                if (!node) return;
+                                if (node.nodeType === 3) {
+                                    var txt = (node.nodeValue || "").trim();
+                                    if (txt) lines.push(txt);
+                                    return;
+                                }
+                                if (node.nodeType !== 1 && node.nodeType !== 11) return;
+                                var tag = (node.tagName || "").toUpperCase();
+                                if (tag === "SCRIPT" || tag === "STYLE" || tag === "NOSCRIPT" || tag === "SVG") return;
+                                if (node.shadowRoot) walk(node.shadowRoot);
+                                var children = node.childNodes;
+                                if (children) {
+                                    for (var i = 0; i < children.length; i++) walk(children[i]);
+                                }
+                            }
+                            walk(root);
+                            return lines.join("\n");
+                        }
+                        var deepBody = hasShadow
+                            ? collectDeepText(document.body)
+                            : (document.body.innerText || collectDeepText(document.body));
                         parts.push("--- متن صفحه ---");
-                        parts.push(bodyText);
-                        return parts.join("\n").slice(0, 45000);
+                        parts.push(deepBody.replace(/\n{3,}/g, "\n\n").trim().slice(0, 32000));
+                        var captured = window.__capturedRacePayloads || [];
+                        for (var j = 0; j < captured.length; j++) {
+                            parts.push("--- CAPTURED_JSON_START ---");
+                            parts.push(String(captured[j]).slice(0, 60000));
+                            parts.push("--- CAPTURED_JSON_END ---");
+                        }
+                        return parts.join("\n");
                     })();
                 """.trimIndent()
 
