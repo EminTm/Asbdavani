@@ -29,15 +29,18 @@ object QuantPredictor {
         sourceUrl: String,
         weights: ModelWeights,
         riskProfile: RiskProfile,
-        newsNotes: String
+        newsNotes: String,
+        scratchedKeys: Set<String> = emptySet()
     ): Result<QuantPredictionOutput> = runCatching {
-        val ctx = MultiSiteParser.parse(rawText, pageTitle, sourceUrl)
-        if (ctx.horses.size < 2) {
-            error("جدول اسب‌ها با ساختار کافی پیدا نشد. لطفاً در «مرورگر سایت» جدول یک دور مشخص را باز کرده و دکمه استخراج را بزنید.")
+        val readResult = PageReaderEngine.read(rawText, pageTitle, sourceUrl)
+        val ctx = readResult.context
+
+        val activeHorses = ctx.horses.filterNot { "${it.number}:${it.horseName}" in scratchedKeys }
+        if (activeHorses.size < 2) {
+            error("جدول اسب‌ها با ساختار کافی پیدا نشد. لطفاً در «مرورگر سایت» داخل صفحه‌ی دقیق مسابقه بروید و دکمه استخراج را بزنید.")
         }
 
-        val horses = ctx.horses
-        val fieldSize = horses.size
+        val fieldSize = activeHorses.size
         val placeCutoff = when {
             fieldSize <= 4 -> 1
             fieldSize <= 7 -> 2
@@ -45,19 +48,23 @@ object QuantPredictor {
             else -> 4
         }
 
-        val avgBestTime = horses.mapNotNull { it.bestTimeSec }.takeIf { it.size >= 2 }?.average()
-        val avgRating = horses.mapNotNull { it.rating }.takeIf { it.size >= 2 }?.average()
-        val ratingSpread = horses.mapNotNull { it.rating }.takeIf { it.size >= 2 }?.let {
+        val avgBestTime = activeHorses.mapNotNull { it.bestTimeSec }.takeIf { it.size >= 2 }?.average()
+        val sortedTimes = activeHorses.mapNotNull { it.bestTimeSec }.distinct().sorted()
+        val fastestTime = sortedTimes.getOrNull(0)
+        val secondFastestTime = sortedTimes.getOrNull(1)
+
+        val avgRating = activeHorses.mapNotNull { it.rating }.takeIf { it.size >= 2 }?.average()
+        val ratingSpread = activeHorses.mapNotNull { it.rating }.takeIf { it.size >= 2 }?.let {
             (it.max() - it.min()).coerceAtLeast(8.0)
         } ?: 20.0
-        val avgWeight = horses.mapNotNull { it.weightKg }.takeIf { it.size >= 2 }?.average()
+        val avgWeight = activeHorses.mapNotNull { it.weightKg }.takeIf { it.size >= 2 }?.average()
         val distFactor = if ((ctx.distanceMeters ?: 1400) >= 1600) 1.25 else 1.0
 
-        val rawFormScores = horses.map { computeRawFormScore(it) }
+        val rawFormScores = activeHorses.map { computeRawFormScore(it) }
         val avgFormScore = rawFormScores.average()
         val effWeights = adjustWeightsForProfile(weights, riskProfile)
 
-        val computed = horses.mapIndexed { idx, h ->
+        val computed = activeHorses.mapIndexed { idx, h ->
             val fForm = ((rawFormScores[idx] - avgFormScore) / 25.0).coerceIn(-1.0, 1.0)
             val fSpeed = if (h.bestTimeSec != null && avgBestTime != null) {
                 ((avgBestTime - h.bestTimeSec) / 1.5).coerceIn(-1.0, 1.0)
@@ -92,40 +99,48 @@ object QuantPredictor {
         val winProbs = softmaxPercents(computed.map { it.totalScore }, temp = 1.45)
         val techProbs = softmaxPercents(computed.map { it.techScore }, temp = 1.35)
 
+        val marketRankedKeys = computed
+            .filter { it.marketProb != null }
+            .sortedByDescending { it.marketProb }
+            .mapIndexed { idx, c -> "${c.horse.number}:${c.horse.horseName}" to (idx + 1) }
+            .toMap()
+
         val enriched = computed.mapIndexed { idx, c ->
             val wp = winProbs[idx]
             val tp = techProbs[idx]
             val fairOdds = ((100.0 / wp) * 10.0).roundToInt() / 10.0
+            val minValueOdds = (fairOdds * 1.15 * 10.0).roundToInt() / 10.0
             val edgePct = c.marketProb?.let { mp ->
                 (((tp.toDouble() / mp) - 1.0) * 100.0).roundToInt().coerceIn(-85, 250)
             }
             val placeProb = (wp * (1.1 + placeCutoff * 0.65)).roundToInt().coerceIn(wp, 95)
             val mathScore = (50.0 + (c.totalScore * 16.0)).roundToInt().coerceIn(12, 99)
 
-            Triple(c, Triple(wp, placeProb, fairOdds), Triple(tp, edgePct, mathScore))
-        }.sortedByDescending { it.second.first }
+            EnrichedHorse(c, wp, placeProb, fairOdds, minValueOdds, tp, edgePct, mathScore)
+        }.sortedByDescending { it.winProb }
 
-        val preScores = enriched.map { (c, wpf, tem) ->
-            val (wp, _, fairOdds) = wpf
-            val (_, edgePct, mathScore) = tem
+        val preScores = enriched.map { e ->
+            val c = e.computed
             val summary = buildList {
-                add("شانس $wp٪ (ضریب ${String.format(Locale.US, "%.1f", fairOdds)})")
-                if (c.marketProb != null && edgePct != null) {
-                    val sign = if (edgePct >= 0) "+$edgePct" else "$edgePct"
-                    add("AGF/بازار ${c.marketProb.roundToInt()}٪ | Edge $sign٪")
+                add("شانس ${e.winProb}٪ (ضریب ${fmt1(e.fairOdds)} | ارزش ≥ ${fmt1(e.minValueOdds)})")
+                if (c.marketProb != null && e.edgePct != null) {
+                    val sign = if (e.edgePct >= 0) "+${e.edgePct}" else "${e.edgePct}"
+                    add("بازار ${c.marketProb.roundToInt()}٪ | Edge $sign٪")
                 }
-                if (c.horse.bestTimeSec != null) add("بهترین تایم ${formatSec(c.horse.bestTimeSec)}")
+                if (c.horse.bestTimeSec != null) add("تایم ${formatSec(c.horse.bestTimeSec)}")
                 if (c.horse.daysSinceLast != null) add("استراحت ${c.horse.daysSinceLast} روز")
             }.joinToString(" • ")
 
             PreScoredHorse(
                 number = c.horse.number,
                 horseName = c.horse.horseName,
-                mathScore = mathScore,
-                mathWinProb = wp,
-                fairOdds = fairOdds,
+                mathScore = e.mathScore,
+                mathWinProb = e.winProb,
+                fairOdds = e.fairOdds,
+                minValueOdds = e.minValueOdds,
+                marketOdds = c.horse.marketOdds,
                 marketProbPercent = c.marketProb?.roundToInt(),
-                edgePercent = edgePct,
+                edgePercent = e.edgePct,
                 drawPct = c.drawPct,
                 winRatePercent = c.winRate,
                 placeRatePercent = c.placeRate,
@@ -133,102 +148,150 @@ object QuantPredictor {
             )
         }
 
-        val analyses = enriched.map { (c, wpf, tem) ->
-            val (wp, placeProb, _) = wpf
-            val (_, edgePct, _) = tem
+        val analyses = enriched.mapIndexed { idx, e ->
+            val c = e.computed
             val f = c.features
-            val strengths = buildHorseStrengths(c, f, edgePct, avgWeight, avgBestTime)
-            val risks = buildHorseRisks(c, f)
-            val formScore10 = (5.5 + (f[0] * 2.5) + (f[1] * 1.5)).roundToInt().coerceIn(1, 10)
-            val verdict = when {
-                wp >= 25 -> "مدعی اصلی قهرمانی"
-                edgePct != null && edgePct >= 15 -> "گزینه باارزش و خطرناک (Value)"
-                placeProb >= 45 -> "شانس بالا برای سکو"
-                else -> "گزینه ذخیره / ریسکی"
+            val key = "${c.horse.number}:${c.horse.horseName}"
+            val mRank = marketRankedKeys[key]
+
+            val mark = when {
+                idx == 0 -> "◎"
+                idx == 1 -> "○"
+                idx == 2 -> "▲"
+                (e.edgePct ?: 0) >= 15 -> "☆"
+                idx == 3 -> "△"
+                else -> ""
             }
+
+            val marketBadge = when {
+                idx <= 1 && mRank != null && mRank <= 2 -> "🥇 طلایی (توافق بازار)"
+                idx <= 2 && (e.edgePct ?: 0) >= 12 -> "🥈 نقره‌ای (شکار ارزش)"
+                else -> ""
+            }
+
+            val speedBadge = when {
+                c.horse.bestTimeSec != null && fastestTime != null && c.horse.bestTimeSec == fastestTime -> "⚡ طلای سرعت"
+                c.horse.bestTimeSec != null && secondFastestTime != null && c.horse.bestTimeSec == secondFastestTime -> "⚡ نقره سرعت"
+                else -> ""
+            }
+
+            val abilityScore = (5.5 + f[0] * 2.5 + f[2] * 2.0).roundToInt().coerceIn(1, 10)
+            val speedFitnessScore = (5.5 + f[1] * 2.8 + f[4] * 1.7).roundToInt().coerceIn(1, 10)
+            val suitabilityScore = (5.5 + f[3] * 2.5 + f[5] * 2.0).roundToInt().coerceIn(1, 10)
+            val overall10 = ((abilityScore + speedFitnessScore + suitabilityScore) / 3.0).roundToInt().coerceIn(1, 10)
+
+            val verdict = when {
+                idx == 0 && e.winProb >= 26 -> "تک‌محور و مدعی اصلی"
+                (e.edgePct ?: 0) >= 15 -> "گزینه باارزش (Value Pick)"
+                e.placeProb >= 45 -> "شانس بالا برای سکو"
+                else -> "ذخیره / ریسکی"
+            }
+
             HorseAnalysis(
                 number = c.horse.number,
                 horseName = c.horse.horseName,
-                winProbability = wp,
-                placeProbability = placeProb,
-                formScore = formScore10,
-                strengths = strengths,
-                risks = risks,
+                mark = mark,
+                winProbability = e.winProb,
+                placeProbability = e.placeProb,
+                formScore = overall10,
+                abilityScore = abilityScore,
+                speedFitnessScore = speedFitnessScore,
+                suitabilityScore = suitabilityScore,
+                fairOdds = e.fairOdds,
+                minValueOdds = e.minValueOdds,
+                marketBadge = marketBadge,
+                speedBadge = speedBadge,
+                strengths = buildHorseStrengths(c, f, e.edgePct, avgWeight, avgBestTime),
+                risks = buildHorseRisks(c, f),
                 verdict = verdict
             )
         }
 
-        val topThree = enriched.take(3).mapIndexed { idx, (c, wpf, tem) ->
-            val reasons = buildHorseStrengths(c, c.features, tem.second, avgWeight, avgBestTime)
+        val topThree = enriched.take(3).mapIndexed { idx, e ->
+            val c = e.computed
+            val reasons = buildHorseStrengths(c, c.features, e.edgePct, avgWeight, avgBestTime)
             TopPick(
                 rank = idx + 1,
                 number = c.horse.number,
                 horseName = c.horse.horseName,
-                winProbability = wpf.first,
+                winProbability = e.winProb,
                 reason = reasons.ifEmpty { listOf("امتیاز متوازن در مجموع فاکتورهای فنی") }.joinToString(" • ")
             )
         }
 
         val darkHorse = enriched.drop(1)
-            .filter { (_, _, tem) -> (tem.second ?: 0) >= 12 || tem.first >= 12 }
-            .maxByOrNull { (_, _, tem) -> tem.second ?: tem.first }
-            ?.let { (c, wpf, tem) ->
-                val edgeTxt = tem.second?.let { "اختلاف ارزش +$it٪ نسبت به بازار دارد" }
+            .filter { (it.edgePct ?: 0) >= 12 || it.techProb >= 12 }
+            .maxByOrNull { it.edgePct ?: it.techProb }
+            ?.let { e ->
+                val c = e.computed
+                val edgeTxt = e.edgePct?.let { "اختلاف ارزش +$it٪ نسبت به بازار دارد" }
                     ?: "از نظر فنی و وزنی پتانسیل شگفتی‌سازی دارد"
                 DarkHorsePick(
                     number = c.horse.number,
                     horseName = c.horse.horseName,
-                    winProbability = wpf.first,
-                    reason = "$edgeTxt (${buildHorseStrengths(c, c.features, tem.second, avgWeight, avgBestTime).firstOrNull() ?: "فرم مناسب"})"
+                    winProbability = e.winProb,
+                    reason = "$edgeTxt (${buildHorseStrengths(c, c.features, e.edgePct, avgWeight, avgBestTime).firstOrNull() ?: "فرم مناسب"})"
                 )
             }
 
-        val anomalies = buildAnomalies(horses, enriched, avgBestTime)
-        val topGap = if (enriched.size >= 2) enriched[0].second.first - enriched[1].second.first else 20
+        val gap12 = if (enriched.size >= 2) enriched[0].winProb - enriched[1].winProb else 20
+        val gap23 = if (enriched.size >= 3) enriched[1].winProb - enriched[2].winProb else 0
         val dataRichness = listOf(avgBestTime != null, avgRating != null, avgWeight != null, rawFormScores.any { it != 50.0 }).count { it }
-        val confPct = (48 + dataRichness * 8 + topGap.coerceAtMost(14)).coerceIn(45, 88)
+
+        val stars = when {
+            gap12 >= 10 && dataRichness >= 2 -> 4
+            gap12 >= 6 -> 3
+            gap12 >= 3 -> 2
+            else -> 1
+        }
+        val confPct = (48 + dataRichness * 8 + gap12.coerceAtMost(14)).coerceIn(45, 89)
         val confLvl = when {
-            confPct >= 72 -> "بالا"
-            confPct >= 58 -> "متوسط"
-            else -> "پایین"
+            stars >= 4 -> "بسیار بالا"
+            stars == 3 -> "خوب"
+            stars == 2 -> "متوسط"
+            else -> "پرریسک"
         }
 
-        val distInfo = listOfNotNull(
-            ctx.distanceMeters?.let { "${it} متر" },
-            ctx.surface.takeIf { it.isNotBlank() }
-        ).joinToString(" ")
-
-        val featureMap = enriched.associate { (c, _, _) ->
-            "${c.horse.number}:${c.horse.horseName}" to c.features
+        val h1 = enriched[0].computed.horse
+        val h2 = enriched.getOrNull(1)?.computed?.horse
+        val advantageNote = when {
+            gap12 >= 8 -> "🔥 تک‌بخت مطمئن (Strongest Single): #${h1.number} ${h1.horseName} با +$gap12٪ برتری!"
+            gap12 >= 5 -> "✅ Advantage Pick: #${h1.number} ${h1.horseName} (+$gap12٪ جلوتر از نفر دوم)"
+            gap23 >= 5 && h2 != null -> "🔸 Second Choice Advantage: #${h2.number} ${h2.horseName} (+$gap23٪ جلوتر از نفر سوم)"
+            else -> "⚖️ کورس بسیار نزدیک و رقابتی بین مدعیان اصلی"
         }
+
+        val comboSuggestion = buildComboSuggestion(enriched)
+        val distInfo = listOfNotNull(ctx.distanceMeters?.let { "${it} متر" }, ctx.surface.takeIf { it.isNotBlank() }).joinToString(" ")
+        val featureMap = enriched.associate { e -> "${e.computed.horse.number}:${e.computed.horse.horseName}" to e.computed.features }
 
         val report = PredictionReport(
             raceSummary = "${ctx.raceTitle} ($fieldSize اسب${if (distInfo.isNotBlank()) " — $distInfo" else ""})",
-            trackAndClassNote = "حد سکو: $placeCutoff نفر اول | استراتژی: ${riskProfile.label} | ${riskProfile.multiplierNote}",
+            trackAndClassNote = "حد سکو: $placeCutoff نفر اول | استراتژی: ${riskProfile.label}",
             confidenceLevel = confLvl,
             confidencePercent = confPct,
-            consensusSummary = "موتور کمی خودآموز Equintel-Quant (${weights.totalRacesLogged} کورس آموزش‌دیده)",
+            confidenceStars = stars,
+            advantageNote = advantageNote,
+            comboSuggestion = comboSuggestion,
+            extractionSource = readResult.sourceLabel,
+            scratchedKeys = scratchedKeys.toList(),
+            consensusSummary = "موتور کمی خودآموز (${weights.totalRacesLogged} کورس آموزش‌دیده)",
             preScores = preScores,
             newsAndContextSummary = newsNotes.trim(),
             tacticalScenario = buildTacticalScenario(enriched, ctx.distanceMeters),
             topThree = topThree,
             darkHorse = darkHorse,
-            anomalyAlerts = anomalies,
+            anomalyAlerts = buildAnomalies(activeHorses, enriched, avgBestTime),
             horseAnalyses = analyses
         )
 
         QuantPredictionOutput(report = report, featureVectors = featureMap)
     }
 
-    fun calibrate(
-        current: ModelWeights,
-        saved: SavedPrediction,
-        winnerKey: String
-    ): Pair<ModelWeights, String> {
+    fun calibrate(current: ModelWeights, saved: SavedPrediction, winnerKey: String): Pair<ModelWeights, String> {
         val winnerFeatures = saved.horseFeatures[winnerKey]
         val top1 = saved.report.topThree.firstOrNull()
-        val top1Key = top1?.let { "${it.number}:${it.horseName}" }
-        val top1Features = top1Key?.let { saved.horseFeatures[it] }
+        val top1Features = top1?.let { saved.horseFeatures["${it.number}:${it.horseName}"] }
 
         val winNum = winnerKey.substringBefore(":").trim()
         val isTop1Hit = saved.report.topThree.firstOrNull()?.number == winNum
@@ -261,20 +324,26 @@ object QuantPredictor {
         return next to hitTxt
     }
 
+    private fun buildComboSuggestion(enriched: List<EnrichedHorse>): String {
+        if (enriched.size < 3) return ""
+        val n1 = enriched[0].computed.horse
+        val n2 = enriched[1].computed.horse
+        val n3 = enriched[2].computed.horse
+        val n4 = enriched.getOrNull(3)?.computed?.horse
+        val gap12 = enriched[0].winProb - enriched[1].winProb
+
+        return if (gap12 >= 7 && n4 != null) {
+            "🎯 پیشنهاد ترکیب (سبک SPAIA): تک‌محور ◎ #${n1.number} ${n1.horseName} ثابت برای مقام اول، و چرخش روی #${n2.number}، #${n3.number}، #${n4.number} برای سکو"
+        } else {
+            val fourth = n4?.let { "، #${it.number}" } ?: ""
+            "🔄 پیشنهاد چرخشی (Box): ترکیب مدعیان نزدیک (#${n1.number}، #${n2.number}، #${n3.number}$fourth)"
+        }
+    }
+
     private fun adjustWeightsForProfile(w: ModelWeights, p: RiskProfile): ModelWeights = when (p) {
         RiskProfile.BALANCED -> w
-        RiskProfile.CONSERVATIVE -> w.copy(
-            formWeight = w.formWeight * 1.25,
-            speedWeight = w.speedWeight * 1.2,
-            ratingWeight = w.ratingWeight * 1.2,
-            marketWeight = w.marketWeight * 1.2
-        )
-        RiskProfile.UPSET_HUNTER -> w.copy(
-            marketWeight = w.marketWeight * 0.4,
-            weightDiffWeight = w.weightDiffWeight * 1.3,
-            drawWeight = w.drawWeight * 1.25,
-            freshnessWeight = w.freshnessWeight * 1.2
-        )
+        RiskProfile.CONSERVATIVE -> w.copy(formWeight = w.formWeight * 1.25, speedWeight = w.speedWeight * 1.2, ratingWeight = w.ratingWeight * 1.2, marketWeight = w.marketWeight * 1.2)
+        RiskProfile.UPSET_HUNTER -> w.copy(marketWeight = w.marketWeight * 0.4, weightDiffWeight = w.weightDiffWeight * 1.3, drawWeight = w.drawWeight * 1.25, freshnessWeight = w.freshnessWeight * 1.2)
     }
 
     private fun computeRawFormScore(h: ParsedHorseRow): Double {
@@ -285,9 +354,7 @@ object QuantPredictor {
                 val s = m.groupValues[2].toDoubleOrNull() ?: 0.0
                 val t = m.groupValues[3].toDoubleOrNull() ?: 0.0
                 val n = (m.groupValues[4].toDoubleOrNull() ?: 0.0).coerceAtLeast(1.0)
-                val bayesWin = (f + 0.35) / (n + 3.0)
-                val bayesPlace = (f + s + t + 0.9) / (n + 3.0)
-                return (bayesWin * 120.0) + (bayesPlace * 65.0)
+                return (((f + 0.35) / (n + 3.0)) * 120.0) + (((f + s + t + 0.9) / (n + 3.0)) * 65.0)
             }
         }
         if (h.recentDigits.isNotEmpty()) {
@@ -298,13 +365,10 @@ object QuantPredictor {
             var sumPts = 0.0
             slice.forEachIndexed { idx, pos ->
                 val w = recencyWeights[offset + idx]
-                val pts = ((11.0 - pos.coerceIn(1, 10)) / 10.0) * 100.0
                 sumW += w
-                sumPts += pts * w
+                sumPts += (((11.0 - pos.coerceIn(1, 10)) / 10.0) * 100.0) * w
             }
-            val base = if (sumW > 0) sumPts / sumW else 50.0
-            val s20Boost = h.s20Score?.let { (it - 16) * 1.5 } ?: 0.0
-            return base + s20Boost
+            return (if (sumW > 0) sumPts / sumW else 50.0) + (h.s20Score?.let { (it - 16) * 1.5 } ?: 0.0)
         }
         return 50.0
     }
@@ -321,10 +385,8 @@ object QuantPredictor {
             }
         }
         if (h.recentDigits.isNotEmpty()) {
-            val w = h.recentDigits.count { it == 1 }
-            val p = h.recentDigits.count { it in 1..3 }
             val n = h.recentDigits.size
-            return ((w * 100.0) / n).roundToInt() to ((p * 100.0) / n).roundToInt()
+            return ((h.recentDigits.count { it == 1 } * 100.0) / n).roundToInt() to ((h.recentDigits.count { it in 1..3 } * 100.0) / n).roundToInt()
         }
         return 0 to 0
     }
@@ -354,109 +416,55 @@ object QuantPredictor {
         return exps.map { ((it / sum) * 100.0).roundToInt().coerceIn(1, 95) }
     }
 
-    private fun buildHorseStrengths(
-        c: ComputedHorse,
-        f: List<Double>,
-        edgePct: Int?,
-        avgWeight: Double?,
-        avgBestTime: Double?
-    ): List<String> = buildList {
+    private fun buildHorseStrengths(c: ComputedHorse, f: List<Double>, edgePct: Int?, avgWeight: Double?, avgBestTime: Double?): List<String> = buildList {
         if (f[0] >= 0.25) add("فرم و ثبات بالا در کورس‌های اخیر")
         if (c.horse.bestTimeSec != null && avgBestTime != null && c.horse.bestTimeSec < avgBestTime - 0.3) {
             add("رکورد زمانی سریع‌تر از میانگین (${formatSec(c.horse.bestTimeSec)})")
         }
         if (f[2] >= 0.3) add("ریتینگ / هندیکپ برتر (${c.horse.rating?.toInt()})")
-        if (c.horse.weightKg != null && avgWeight != null && c.horse.weightKg <= avgWeight - 1.5) {
-            add("مزیت وزن سبک (${c.horse.weightKg}kg)")
-        }
+        if (c.horse.weightKg != null && avgWeight != null && c.horse.weightKg <= avgWeight - 1.5) add("مزیت وزن سبک (${c.horse.weightKg}kg)")
         if (f[4] >= 0.5) add("آمادگی زمانی عالی (${c.horse.daysSinceLast} روز استراحت)")
         if (c.drawPct != null && c.drawPct <= 0.35) add("دپار داخلی مناسب (${String.format(Locale.US, "%.2f", c.drawPct)})")
-        if (edgePct != null && edgePct >= 15) add("ارزش پنهان +$edgePct٪ نسبت به AGF/بازار")
+        if (edgePct != null && edgePct >= 15) add("ارزش پنهان +$edgePct٪ نسبت به بازار")
     }.take(4)
 
     private fun buildHorseRisks(c: ComputedHorse, f: List<Double>): List<String> = buildList {
         if (f[0] <= -0.3) add("افت فرم در مسابقات اخیر")
-        if (f[3] <= -0.35) add("وزن سنگین‌تر از میانگین گروه (${c.horse.weightKg}kg)")
-        if (c.horse.daysSinceLast != null && c.horse.daysSinceLast > 60) add("دوری طولانی از مسابقه (${c.horse.daysSinceLast} روز)")
+        if (f[3] <= -0.35) add("وزن سنگین‌تر از میانگین (${c.horse.weightKg}kg)")
+        if (c.horse.daysSinceLast != null && c.horse.daysSinceLast > 60) add("دوری طولانی (${c.horse.daysSinceLast} روز)")
         if (c.drawPct != null && c.drawPct >= 0.80) add("دپار بیرونی (${c.horse.gate})")
     }.take(3)
 
-    private fun buildAnomalies(
-        horses: List<ParsedHorseRow>,
-        enriched: List<Triple<ComputedHorse, Triple<Int, Int, Double>, Triple<Int, Int?, Int>>>,
-        avgBestTime: Double?
-    ): List<AnomalySignal> {
+    private fun buildAnomalies(horses: List<ParsedHorseRow>, enriched: List<EnrichedHorse>, avgBestTime: Double?): List<AnomalySignal> {
         val list = mutableListOf<AnomalySignal>()
-
-        horses.filter { it.trainer.isNotBlank() }
-            .groupBy { it.trainer.trim().lowercase() }
-            .filter { it.value.size >= 2 }
-            .forEach { (_, group) ->
-                val names = group.joinToString("، ") { "#${it.number} ${it.horseName}" }
-                list.add(
-                    AnomalySignal(
-                        title = "هم‌مربی در کورس (${group.first().trainer})",
-                        severity = "نکته تاکتیکی",
-                        description = "این مربی همزمان ${group.size} اسب در این دور دارد: $names (احتمال تاکتیک تیمی)."
-                    )
-                )
-            }
-
-        horses.filter { it.owner.isNotBlank() }
-            .groupBy { it.owner.trim().lowercase() }
-            .filter { it.value.size >= 2 }
-            .forEach { (_, group) ->
-                val names = group.joinToString("، ") { "#${it.number} ${it.horseName}" }
-                list.add(
-                    AnomalySignal(
-                        title = "هم‌مالک در کورس (${group.first().owner})",
-                        severity = "نکته تاکتیکی",
-                        description = "مالکیت مشترک برای ${group.size} اسب: $names."
-                    )
-                )
-            }
-
-        val valueGem = enriched.firstOrNull { (c, _, tem) ->
-            (tem.second ?: 0) >= 20 && (c.marketProb ?: 100.0) <= 18.0
+        horses.filter { it.trainer.isNotBlank() }.groupBy { it.trainer.trim().lowercase() }.filter { it.value.size >= 2 }.forEach { (_, g) ->
+            list.add(AnomalySignal("هم‌مربی در کورس (${g.first().trainer})", "نکته تاکتیکی", "حضور همزمان ${g.size} اسب: ${g.joinToString("، ") { "#${it.number} ${it.horseName}" }}"))
         }
-        if (valueGem != null) {
-            val (c, _, tem) = valueGem
-            list.add(
-                AnomalySignal(
-                    title = "هشدار ارزش پنهان روی #${c.horse.number} ${c.horse.horseName}",
-                    severity = "هشدار بالا",
-                    description = "AGF/بازار فقط ${c.marketProb?.roundToInt()}٪ است اما شاخص فنی شانس ${tem.first}٪ نشان می‌دهد (Edge +${tem.second}٪)."
-                )
-            )
+        horses.filter { it.owner.isNotBlank() }.groupBy { it.owner.trim().lowercase() }.filter { it.value.size >= 2 }.forEach { (_, g) ->
+            list.add(AnomalySignal("هم‌مالک در کورس (${g.first().owner})", "نکته تاکتیکی", "مالکیت مشترک: ${g.joinToString("، ") { "#${it.number} ${it.horseName}" }}"))
         }
-
+        enriched.firstOrNull { (it.edgePct ?: 0) >= 20 && (it.computed.marketProb ?: 100.0) <= 18.0 }?.let { e ->
+            list.add(AnomalySignal("هشدار ارزش پنهان روی #${e.computed.horse.number} ${e.computed.horse.horseName}", "هشدار بالا", "بازار فقط ${e.computed.marketProb?.roundToInt()}٪ است اما شاخص فنی ${e.techProb}٪ است (Edge +${e.edgePct}٪)."))
+        }
         if (avgBestTime != null) {
-            val fastest = horses.filter { it.bestTimeSec != null }.minByOrNull { it.bestTimeSec!! }
-            if (fastest != null && (fastest.marketAgfPct ?: 50.0) < 15.0) {
-                list.add(
-                    AnomalySignal(
-                        title = "سریع‌ترین رکورد کم‌توجه: #${fastest.number} ${fastest.horseName}",
-                        severity = "نکته تاکتیکی",
-                        description = "بهترین زمان (${formatSec(fastest.bestTimeSec!!)}) را بین رقبا دارد اما در AGF کمتر دیده شده است."
-                    )
-                )
+            horses.filter { it.bestTimeSec != null }.minByOrNull { it.bestTimeSec!! }?.let { f ->
+                if ((f.marketAgfPct ?: 50.0) < 15.0) {
+                    list.add(AnomalySignal("سریع‌ترین رکورد کم‌توجه: #${f.number} ${f.horseName}", "نکته تاکتیکی", "بهترین زمان (${formatSec(f.bestTimeSec!!)}) را دارد اما AGF پایینی گرفته است."))
+                }
             }
         }
-
         return list.take(6)
     }
 
-    private fun buildTacticalScenario(
-        enriched: List<Triple<ComputedHorse, Triple<Int, Int, Double>, Triple<Int, Int?, Int>>>,
-        dist: Int?
-    ): String {
-        val insideFav = enriched.firstOrNull { it.first.drawPct != null && it.first.drawPct!! <= 0.35 }?.first?.horse
-        val top1 = enriched.first().first.horse
-        val distNote = if ((dist ?: 1400) <= 1300) "در این مسافت سرعتی، استارت سریع و دپار داخلی نقش کلیدی دارد."
-        else "در این مسافت، ذخیره انرژی تا پیچ آخر و مزیت وزن سبک تعیین‌کننده است."
+    private fun buildTacticalScenario(enriched: List<EnrichedHorse>, dist: Int?): String {
+        val insideFav = enriched.firstOrNull { it.computed.drawPct != null && it.computed.drawPct!! <= 0.35 }?.computed?.horse
+        val top1 = enriched.first().computed.horse
+        val distNote = if ((dist ?: 1400) <= 1300) "در این مسافت سرعتی، استارت سریع و دپار داخلی نقش کلیدی دارد." else "در این مسافت، ذخیره انرژی تا پیچ آخر و وزن سبک تعیین‌کننده است."
         val insideNote = insideFav?.let { " اسب #${it.number} ${it.horseName} از خط داخلی شانس شروع بهتری دارد." } ?: ""
         return "$distNote محور اصلی کورس روی #${top1.number} ${top1.horseName} پیش‌بینی می‌شود.$insideNote"
     }
+
+    private fun fmt1(v: Double): String = String.format(Locale.US, "%.1f", v)
 
     private fun formatSec(sec: Double): String {
         val m = (sec / 60.0).toInt()
@@ -473,5 +481,16 @@ object QuantPredictor {
         val marketProb: Double?,
         val winRate: Int,
         val placeRate: Int
+    )
+
+    private data class EnrichedHorse(
+        val computed: ComputedHorse,
+        val winProb: Int,
+        val placeProb: Int,
+        val fairOdds: Double,
+        val minValueOdds: Double,
+        val techProb: Int,
+        val edgePct: Int?,
+        val mathScore: Int
     )
 }
