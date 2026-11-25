@@ -29,7 +29,7 @@ class AsbdavaniScraper {
 
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
-                    error("خطا در دریافت سایت (کد ${response.code}). از تب «سایت زنده» بازش کنید.")
+                    error("خطا در دریافت سایت (کد ${response.code}). از تب «مرورگر سایت» بازش کنید.")
                 }
                 val html = response.body?.string().orEmpty()
                 if (html.isBlank()) {
@@ -68,16 +68,15 @@ class AsbdavaniScraper {
                     builder.appendLine("--- جدول ${index + 1} ---")
                     val rows = table.select("tr")
                     for (row in rows) {
-                        val cells = row.select("th, td")
-                            .map { cell ->
-                                val parts = cell.select("a, span, div, p, strong")
-                                    .map { it.ownText().trim() }
-                                    .filter { it.isNotEmpty() }
-                                if (parts.size > 1) parts.joinToString(" · ") else cell.text().trim()
-                            }
-                            .filter { it.isNotEmpty() }
-                        if (cells.isNotEmpty()) {
-                            builder.appendLine(cells.joinToString(" | "))
+                        val rawCells = row.select("th, td").map { cell ->
+                            val parts = cell.select("a, span, div, p, strong, sup")
+                                .map { it.ownText().trim() }
+                                .filter { it.isNotEmpty() }
+                            val textVal = if (parts.size > 1) parts.joinToString(" · ") else cell.text().trim()
+                            textVal.ifEmpty { " " }
+                        }
+                        if (rawCells.any { it.isNotBlank() }) {
+                            builder.appendLine(rawCells.joinToString(" | "))
                         }
                     }
                     builder.appendLine()
@@ -90,7 +89,7 @@ class AsbdavaniScraper {
 
                 if (headingsAndBlocks.isNotEmpty()) {
                     builder.appendLine("--- متن و جزئیات صفحه ---")
-                    for (line in headingsAndBlocks.take(120)) {
+                    for (line in headingsAndBlocks.take(140)) {
                         builder.appendLine(line)
                     }
                 }
@@ -106,7 +105,7 @@ class AsbdavaniScraper {
                     builder.appendLine(bodyFallback)
                 }
 
-                val finalText = builder.toString().trim().take(28000)
+                val finalText = builder.toString().trim().take(36000)
                 val needsWebView = (tables.isEmpty() && nextData.isBlank()) ||
                     finalText.length < 400 ||
                     finalText.contains("Just a moment", ignoreCase = true)
@@ -124,7 +123,7 @@ class AsbdavaniScraper {
     }
 
     private fun extractNextDataText(html: String): String {
-        val m = Regex("""<script[^>]*id=["']__NEXT_DATA__["'][^>]*>([\s\S]*?)</script>""", RegexOption.IGNORE_CASE)
+        val m = Regex("""<script[^>]*id=["']__NEXT_DATA__["'][^>]*>([\s\S]*?)<\/script>""", RegexOption.IGNORE_CASE)
             .find(html)
         if (m != null) {
             val rawJson = m.groupValues[1]
@@ -144,20 +143,14 @@ class AsbdavaniScraper {
             var escaped = false
             while (i < html.length) {
                 val ch = html[i]
-                if (escaped) {
-                    escaped = false
-                } else if (ch == '\\') {
-                    escaped = true
-                } else if (ch == '"') {
-                    break
-                }
+                if (escaped) escaped = false
+                else if (ch == '\\') escaped = true
+                else if (ch == '"') break
                 i++
             }
             val rawLiteral = html.substring(start + marker.length, i)
             pos = i + 1
-            val decoded = runCatching {
-                JSONTokener("\"$rawLiteral\"").nextValue() as? String
-            }.getOrNull()
+            val decoded = runCatching { JSONTokener("\"$rawLiteral\"").nextValue() as? String }.getOrNull()
             if (!decoded.isNullOrBlank() &&
                 Regex("""دور|مالک|مربی|چابکسوار|اسبدوانی|race|horse|jockey|trainer""", RegexOption.IGNORE_CASE)
                     .containsMatchIn(decoded)
@@ -178,10 +171,6 @@ class AsbdavaniScraper {
 
     private fun normalizeUrl(url: String): String {
         val trimmed = url.trim().ifEmpty { "https://asbdavani.app/racecards" }
-        return if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
-            trimmed
-        } else {
-            "https://$trimmed"
-        }
+        return if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) trimmed else "https://$trimmed"
     }
 }
