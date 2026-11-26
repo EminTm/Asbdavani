@@ -98,14 +98,11 @@ private val SNIFFER_JS = """
         if (window.__raceSnifferInstalled) return;
         window.__raceSnifferInstalled = true;
         window.__capturedRacePayloads = [];
-        function maybeSave(url, text) {
+        function maybeSave(text) {
             try {
                 if (!text || text.length < 80 || text.length > 350000) return;
-                var lower = text.toLowerCase();
-                if (lower.indexOf("horse") !== -1 || lower.indexOf("runner") !== -1 ||
-                    lower.indexOf("jockey") !== -1 || lower.indexOf("outcomes") !== -1 ||
-                    lower.indexOf("betoffers") !== -1 || lower.indexOf("اسب") !== -1 ||
-                    lower.indexOf("چابکسوار") !== -1 || lower.indexOf("مربی") !== -1) {
+                var l = text.toLowerCase();
+                if (l.indexOf("horse")!==-1 || l.indexOf("runner")!==-1 || l.indexOf("jockey")!==-1 || l.indexOf("outcomes")!==-1 || l.indexOf("betoffers")!==-1 || l.indexOf("اسب")!==-1) {
                     window.__capturedRacePayloads.push(text);
                     if (window.__capturedRacePayloads.length > 8) window.__capturedRacePayloads.shift();
                 }
@@ -114,23 +111,19 @@ private val SNIFFER_JS = """
         var origFetch = window.fetch;
         if (origFetch) {
             window.fetch = function() {
-                var reqUrl = (arguments[0] && arguments[0].url) ? arguments[0].url : String(arguments[0] || "");
                 return origFetch.apply(this, arguments).then(function(res) {
-                    try { res.clone().text().then(function(t) { maybeSave(reqUrl, t); }); } catch (e) {}
+                    try { res.clone().text().then(maybeSave); } catch (e) {}
                     return res;
                 });
             };
         }
-        var origOpen = XMLHttpRequest.prototype.open;
         var origSend = XMLHttpRequest.prototype.send;
-        XMLHttpRequest.prototype.open = function(m, u) { this.__reqUrl = u; return origOpen.apply(this, arguments); };
         XMLHttpRequest.prototype.send = function() {
-            var xhr = this;
-            xhr.addEventListener("load", function() {
+            var x = this;
+            x.addEventListener("load", function() {
                 try {
-                    if (!xhr.responseType || xhr.responseType === "text" || xhr.responseType === "json") {
-                        var txt = typeof xhr.responseText === "string" ? xhr.responseText : JSON.stringify(xhr.response);
-                        maybeSave(xhr.__reqUrl, txt);
+                    if (!x.responseType || x.responseType === "text" || x.responseType === "json") {
+                        maybeSave(typeof x.responseText === "string" ? x.responseText : JSON.stringify(x.response));
                     }
                 } catch (e) {}
             });
@@ -143,15 +136,11 @@ private val SNIFFER_JS = """
 @Composable
 fun MainScreen(viewModel: MainViewModel) {
     val state by viewModel.uiState.collectAsState()
-
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("تحلیلگر حرفه‌ای اسبدوانی", fontWeight = FontWeight.Bold) },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    titleContentColor = MaterialTheme.colorScheme.onPrimary
-                )
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.primary, titleContentColor = MaterialTheme.colorScheme.onPrimary)
             )
         },
         bottomBar = {
@@ -163,28 +152,17 @@ fun MainScreen(viewModel: MainViewModel) {
                         AppTab.HISTORY -> Icons.Default.History
                         AppTab.SETTINGS -> Icons.Default.Tune
                     }
-                    NavigationBarItem(
-                        selected = state.selectedTab == tab,
-                        onClick = { viewModel.selectTab(tab) },
-                        icon = { Icon(icon, contentDescription = tab.title) },
-                        label = { Text(tab.title) }
-                    )
+                    NavigationBarItem(selected = state.selectedTab == tab, onClick = { viewModel.selectTab(tab) }, icon = { Icon(icon, tab.title) }, label = { Text(tab.title) })
                 }
             }
         }
     ) { innerPadding ->
         Column(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
-            state.availableUpdate?.let { update ->
-                UpdateAvailableBanner(update, state.isDownloadingUpdate, state.updateDownloadProgress, { viewModel.installAvailableUpdate() }, { viewModel.dismissUpdateBanner() })
-            }
+            state.availableUpdate?.let { u -> UpdateAvailableBanner(u, state.isDownloadingUpdate, state.updateDownloadProgress, { viewModel.installAvailableUpdate() }, { viewModel.dismissUpdateBanner() }) }
             StatusBanners(state.statusMessage, state.errorMessage) { viewModel.clearMessages() }
             when (state.selectedTab) {
                 AppTab.PREDICT -> PredictTab(state, viewModel)
-                AppTab.BROWSER -> LiveBrowserTab(
-                    initialUrl = state.urlInput,
-                    onUrlChanged = { viewModel.updateUrlInput(it) },
-                    onExtractAndPredict = { title, url, text -> viewModel.onWebViewExtracted(title, url, text) }
-                )
+                AppTab.BROWSER -> LiveBrowserTab(state.urlInput, { viewModel.updateUrlInput(it) }, { t, u, x -> viewModel.onWebViewExtracted(t, u, x) })
                 AppTab.HISTORY -> HistoryTab(state, viewModel)
                 AppTab.SETTINGS -> CalibrationTab(state, viewModel)
             }
@@ -200,13 +178,12 @@ private fun UpdateAvailableBanner(update: AppUpdateInfo, isDownloading: Boolean,
                 Text("نسخه جدید ${update.versionName} آماده است!", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                 if (!isDownloading) {
                     Button(onClick = onInstallClick) { Text("نصب آپدیت") }
-                    IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, contentDescription = "بستن") }
+                    IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, "بستن") }
                 }
             }
             if (isDownloading) {
                 Spacer(Modifier.height(6.dp))
                 LinearProgressIndicator(progress = { (progress.coerceIn(0, 100)) / 100f }, modifier = Modifier.fillMaxWidth())
-                Spacer(Modifier.height(4.dp))
                 Text("در حال دانلود... $progress٪", style = MaterialTheme.typography.labelSmall)
             }
         }
@@ -223,7 +200,7 @@ private fun StatusBanners(statusMessage: String?, errorMessage: String?, onDismi
     ) {
         Row(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(msg, color = if (isErr) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onPrimaryContainer, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
-            IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, contentDescription = "بستن") }
+            IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, "بستن") }
         }
     }
 }
@@ -235,39 +212,29 @@ private fun PredictTab(state: MainUiState, viewModel: MainViewModel) {
     var showRawData by remember { mutableStateOf(true) }
     var showNotes by remember { mutableStateOf(false) }
 
-    Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
+    Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         ElevatedCard(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(14.dp)) {
                 Text("انتخاب سایت مسابقات", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(6.dp))
                 Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    QUICK_SITES.forEach { (label, siteUrl) ->
-                        SuggestionChip(onClick = { viewModel.updateUrlInput(siteUrl) }, label = { Text(label) })
-                    }
+                    QUICK_SITES.forEach { (label, siteUrl) -> SuggestionChip(onClick = { viewModel.updateUrlInput(siteUrl) }, label = { Text(label) }) }
                 }
                 Spacer(Modifier.height(6.dp))
                 OutlinedTextField(value = state.urlInput, onValueChange = { viewModel.updateUrlInput(it) }, label = { Text("آدرس صفحه مسابقات") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 Spacer(Modifier.height(8.dp))
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(onClick = { viewModel.fetchFromSite() }, enabled = !state.isFetchingSite && !state.isAnalyzing, modifier = Modifier.weight(1f)) {
-                        if (state.isFetchingSite) {
-                            CircularProgressIndicator(modifier = Modifier.width(18.dp).height(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
-                            Spacer(Modifier.width(8.dp))
-                        }
+                        if (state.isFetchingSite) { CircularProgressIndicator(Modifier.width(18.dp).height(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary); Spacer(Modifier.width(8.dp)) }
                         Text("دریافت مستقیم")
                     }
                     OutlinedButton(onClick = { viewModel.selectTab(AppTab.BROWSER) }, modifier = Modifier.weight(1f)) {
-                        Icon(Icons.Default.Language, contentDescription = null)
-                        Spacer(Modifier.width(6.dp))
-                        Text("مرورگر سایت")
+                        Icon(Icons.Default.Language, null); Spacer(Modifier.width(6.dp)); Text("مرورگر سایت")
                     }
                 }
                 if (state.needsWebViewHint) {
                     Spacer(Modifier.height(8.dp))
-                    Text("برای Unibet و صفحات جدول‌دار TJK / اسبدوانی، دکمه «مرورگر سایت» را بزنید و داخل صفحه دکمه استخراج را لمس کنید.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                    Text("برای سایت‌های جدول‌دار از دکمه «مرورگر سایت» وارد شوید و دکمه استخراج را لمس کنید.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
                 }
             }
         }
@@ -277,22 +244,14 @@ private fun PredictTab(state: MainUiState, viewModel: MainViewModel) {
                 Text("انتخاب کورس / دورِ پیداشده:", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(4.dp))
                 Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    state.raceSections.forEachIndexed { idx, sec ->
-                        FilterChip(
-                            selected = state.selectedSectionIndex == idx,
-                            onClick = { viewModel.selectRaceSection(idx) },
-                            label = { Text(sec.label) }
-                        )
-                    }
+                    state.raceSections.forEachIndexed { idx, sec -> FilterChip(selected = state.selectedSectionIndex == idx, onClick = { viewModel.selectRaceSection(idx) }, label = { Text(sec.label) }) }
                 }
             }
         }
 
         if (state.discoveredLinks.isNotEmpty()) {
             Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                state.discoveredLinks.forEach { link ->
-                    AssistChip(onClick = { viewModel.fetchFromSite(link.url) }, label = { Text(link.title) }, leadingIcon = { Icon(Icons.Default.Link, contentDescription = null) })
-                }
+                state.discoveredLinks.forEach { link -> AssistChip(onClick = { viewModel.fetchFromSite(link.url) }, label = { Text(link.title) }, leadingIcon = { Icon(Icons.Default.Link, null) }) }
             }
         }
 
@@ -300,23 +259,18 @@ private fun PredictTab(state: MainUiState, viewModel: MainViewModel) {
             Column(modifier = Modifier.padding(12.dp)) {
                 Row(modifier = Modifier.fillMaxWidth().clickable { showRawData = !showRawData }, horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Text("داده‌های استخراج‌شده (${state.raceDataInput.length} کاراکتر)", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-                    Icon(if (showRawData) Icons.Default.ExpandLess else Icons.Default.ExpandMore, contentDescription = null)
+                    Icon(if (showRawData) Icons.Default.ExpandLess else Icons.Default.ExpandMore, null)
                 }
                 if (showRawData) {
                     Spacer(Modifier.height(8.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilledTonalButton(onClick = {
-                            val pasted = clipboardManager.getText()?.text.orEmpty()
-                            if (pasted.isNotBlank()) viewModel.updateRaceDataInput(pasted)
-                        }) {
-                            Icon(Icons.Default.ContentPaste, contentDescription = null)
-                            Spacer(Modifier.width(6.dp))
-                            Text("چسباندن متن")
+                        FilledTonalButton(onClick = { clipboardManager.getText()?.text?.takeIf { it.isNotBlank() }?.let { viewModel.updateRaceDataInput(it) } }) {
+                            Icon(Icons.Default.ContentPaste, null); Spacer(Modifier.width(6.dp)); Text("چسباندن متن")
                         }
                         if (state.raceDataInput.isNotEmpty()) TextButton(onClick = { viewModel.updateRaceDataInput("") }) { Text("پاک کردن") }
                     }
                     Spacer(Modifier.height(6.dp))
-                    OutlinedTextField(value = state.raceDataInput, onValueChange = { viewModel.updateRaceDataInput(it) }, label = { Text("جدول اسب‌ها...") }, minLines = 4, maxLines = 8, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = state.raceDataInput, onValueChange = { viewModel.updateRaceDataInput(it) }, label = { Text("متن یا جدول...") }, minLines = 4, maxLines = 8, modifier = Modifier.fillMaxWidth())
                 }
             }
         }
@@ -325,7 +279,7 @@ private fun PredictTab(state: MainUiState, viewModel: MainViewModel) {
             Column(modifier = Modifier.padding(12.dp)) {
                 Row(modifier = Modifier.fillMaxWidth().clickable { showNotes = !showNotes }, horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Text("یادداشت شرایط پیست یا اخبار (اختیاری)", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                    Icon(if (showNotes) Icons.Default.ExpandLess else Icons.Default.ExpandMore, contentDescription = null)
+                    Icon(if (showNotes) Icons.Default.ExpandLess else Icons.Default.ExpandMore, null)
                 }
                 if (showNotes || state.newsNotesInput.isNotBlank()) {
                     Spacer(Modifier.height(6.dp))
@@ -334,10 +288,8 @@ private fun PredictTab(state: MainUiState, viewModel: MainViewModel) {
             }
         }
 
-        Button(onClick = { viewModel.analyzeCurrentRace() }, enabled = !state.isAnalyzing && state.raceDataInput.isNotBlank(), modifier = Modifier.fillMaxWidth().height(52.dp)) {
-            Icon(Icons.Default.BarChart, contentDescription = null)
-            Spacer(Modifier.width(8.dp))
-            Text("شروع تحلیل کمی پیشرفته (فوری)", fontWeight = FontWeight.Bold)
+        Button(onClick = { viewModel.analyzeCurrentRace() }, enabled = !state.isAnalyzing && (state.raceDataInput.isNotBlank() || state.rawPayloadWithJson.isNotBlank()), modifier = Modifier.fillMaxWidth().height(52.dp)) {
+            Icon(Icons.Default.BarChart, null); Spacer(Modifier.width(8.dp)); Text("شروع تحلیل کمی پیشرفته (فوری)", fontWeight = FontWeight.Bold)
         }
 
         state.currentReport?.let { report ->
@@ -367,28 +319,23 @@ private fun LiveBrowserTab(initialUrl: String, onUrlChanged: (String) -> Unit, o
 
     fun navigateTo(raw: String) {
         val target = raw.trim().let { if (it.startsWith("http://") || it.startsWith("https://")) it else "https://$it" }
-        currentUrl = target
-        urlBarText = target
-        onUrlChanged(target)
-        webView?.loadUrl(target)
+        currentUrl = target; urlBarText = target; onUrlChanged(target); webView?.loadUrl(target)
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
             Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = { if (webView?.canGoBack() == true) webView?.goBack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "عقب") }
-                IconButton(onClick = { webView?.reload() }) { Icon(Icons.Default.Refresh, contentDescription = "رفرش") }
+                IconButton(onClick = { if (webView?.canGoBack() == true) webView?.goBack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "عقب") }
+                IconButton(onClick = { webView?.reload() }) { Icon(Icons.Default.Refresh, "رفرش") }
                 OutlinedTextField(value = urlBarText, onValueChange = { urlBarText = it }, singleLine = true, placeholder = { Text("آدرس سایت...") }, modifier = Modifier.weight(1f))
                 Spacer(Modifier.width(4.dp))
                 TextButton(onClick = { navigateTo(urlBarText) }) { Text("برو", fontWeight = FontWeight.Bold) }
             }
-
             Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp, vertical = 2.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 QUICK_SITES.forEach { (label, siteUrl) ->
                     FilterChip(selected = currentUrl.contains(siteUrl.removePrefix("https://").substringBefore("/")), onClick = { navigateTo(siteUrl) }, label = { Text(label) })
                 }
             }
-
             if (progress in 1..99) LinearProgressIndicator(progress = { progress / 100f }, modifier = Modifier.fillMaxWidth())
 
             AndroidView(
@@ -397,26 +344,19 @@ private fun LiveBrowserTab(initialUrl: String, onUrlChanged: (String) -> Unit, o
                     WebView(ctx).apply {
                         CookieManager.getInstance().setAcceptCookie(true)
                         CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
-                        settings.javaScriptEnabled = true
-                        settings.domStorageEnabled = true
-                        settings.loadWithOverviewMode = true
-                        settings.useWideViewPort = true
+                        settings.javaScriptEnabled = true; settings.domStorageEnabled = true
+                        settings.loadWithOverviewMode = true; settings.useWideViewPort = true
                         settings.userAgentString = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36"
                         webViewClient = object : WebViewClient() {
-                            override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
-                                view?.evaluateJavascript(SNIFFER_JS, null)
-                            }
+                            override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) { view?.evaluateJavascript(SNIFFER_JS, null) }
                             override fun onPageFinished(view: WebView?, url: String?) {
                                 view?.evaluateJavascript(SNIFFER_JS, null)
                                 if (!url.isNullOrBlank()) { currentUrl = url; urlBarText = url; onUrlChanged(url) }
                                 if (!view?.title.isNullOrBlank()) currentTitle = view?.title.orEmpty()
                             }
                         }
-                        webChromeClient = object : WebChromeClient() {
-                            override fun onProgressChanged(view: WebView?, newProgress: Int) { progress = newProgress }
-                        }
-                        loadUrl(currentUrl)
-                        webView = this
+                        webChromeClient = object : WebChromeClient() { override fun onProgressChanged(view: WebView?, p: Int) { progress = p } }
+                        loadUrl(currentUrl); webView = this
                     }
                 }
             )
@@ -426,56 +366,41 @@ private fun LiveBrowserTab(initialUrl: String, onUrlChanged: (String) -> Unit, o
             onClick = {
                 val js = """
                     (function() {
-                        var parts = [];
-                        parts.push("عنوان: " + document.title);
-                        parts.push("آدرس: " + window.location.href);
+                        var parts = ["عنوان: " + document.title, "آدرس: " + window.location.href];
                         var hasShadow = false;
                         function collectTables(root) {
                             root.querySelectorAll("table").forEach(function(table, idx) {
                                 parts.push("--- جدول " + (idx + 1) + " ---");
                                 table.querySelectorAll("tr").forEach(function(row) {
-                                    var cells = [];
-                                    var hasText = false;
+                                    var cells = [], hasText = false;
                                     row.querySelectorAll("th, td").forEach(function(cell) {
                                         var t = (cell.innerText || "").trim().replace(/\n+/g, " · ").replace(/[ \t]+/g, " ");
                                         if (t) hasText = true;
                                         cells.push(t || " ");
+                                        var span = cell.colSpan || 1;
+                                        for (var s = 1; s < span; s++) cells.push(" ");
                                     });
                                     if (cells.length > 0 && hasText) parts.push(cells.join(" | "));
                                 });
                             });
-                            root.querySelectorAll("*").forEach(function(el) {
-                                if (el.shadowRoot) {
-                                    hasShadow = true;
-                                    collectTables(el.shadowRoot);
-                                }
-                            });
+                            root.querySelectorAll("*").forEach(function(el) { if (el.shadowRoot) { hasShadow = true; collectTables(el.shadowRoot); } });
                         }
                         collectTables(document);
                         function collectDeepText(root) {
                             var lines = [];
                             function walk(node) {
                                 if (!node) return;
-                                if (node.nodeType === 3) {
-                                    var txt = (node.nodeValue || "").trim();
-                                    if (txt) lines.push(txt);
-                                    return;
-                                }
+                                if (node.nodeType === 3) { var txt = (node.nodeValue || "").trim(); if (txt) lines.push(txt); return; }
                                 if (node.nodeType !== 1 && node.nodeType !== 11) return;
                                 var tag = (node.tagName || "").toUpperCase();
                                 if (tag === "SCRIPT" || tag === "STYLE" || tag === "NOSCRIPT" || tag === "SVG") return;
                                 if (node.shadowRoot) walk(node.shadowRoot);
-                                var children = node.childNodes;
-                                if (children) {
-                                    for (var i = 0; i < children.length; i++) walk(children[i]);
-                                }
+                                if (node.childNodes) for (var i = 0; i < node.childNodes.length; i++) walk(node.childNodes[i]);
                             }
                             walk(root);
                             return lines.join("\n");
                         }
-                        var deepBody = hasShadow
-                            ? collectDeepText(document.body)
-                            : (document.body.innerText || collectDeepText(document.body));
+                        var deepBody = hasShadow ? collectDeepText(document.body) : (document.body.innerText || collectDeepText(document.body));
                         parts.push("--- متن صفحه ---");
                         parts.push(deepBody.replace(/\n{3,}/g, "\n\n").trim().slice(0, 32000));
                         var captured = window.__capturedRacePayloads || [];
@@ -493,7 +418,7 @@ private fun LiveBrowserTab(initialUrl: String, onUrlChanged: (String) -> Unit, o
                     if (decoded.isNotBlank()) onExtractAndPredict(currentTitle, currentUrl, decoded)
                 }
             },
-            icon = { Icon(Icons.Default.AutoAwesome, contentDescription = null) },
+            icon = { Icon(Icons.Default.AutoAwesome, null) },
             text = { Text("استخراج و تحلیل فوری") },
             modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp)
         )
@@ -503,7 +428,7 @@ private fun LiveBrowserTab(initialUrl: String, onUrlChanged: (String) -> Unit, o
 @Composable
 private fun HistoryTab(state: MainUiState, viewModel: MainViewModel) {
     if (state.history.isEmpty()) {
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Text("هنوز هیچ تحلیلی ذخیره نشده است.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         return
@@ -515,16 +440,12 @@ private fun HistoryTab(state: MainUiState, viewModel: MainViewModel) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(item.report.raceSummary.ifBlank { "گزارش مسابقه" }, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                         Spacer(Modifier.height(4.dp))
-                        item.report.topThree.firstOrNull()?.let { top ->
-                            Text("پیش‌بینی اول: #${top.number} ${top.horseName} (${top.winProbability}٪)", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
-                        }
-                        if (item.report.actualWinnerName.isNotBlank()) {
-                            Text("🏆 برنده واقعی: ${item.report.actualWinnerName}", style = MaterialTheme.typography.bodySmall, color = Color(0xFF1B5E20), fontWeight = FontWeight.Bold)
-                        }
+                        item.report.topThree.firstOrNull()?.let { top -> Text("پیش‌بینی اول: #${top.number} ${top.horseName} (${top.winProbability}٪)", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary) }
+                        if (item.report.actualWinnerName.isNotBlank()) Text("🏆 برنده واقعی: ${item.report.actualWinnerName}", style = MaterialTheme.typography.bodySmall, color = Color(0xFF1B5E20), fontWeight = FontWeight.Bold)
                         Spacer(Modifier.height(2.dp))
                         Text(item.timestamp, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    IconButton(onClick = { viewModel.deleteHistoryItem(item.id) }) { Icon(Icons.Default.Delete, contentDescription = "حذف") }
+                    IconButton(onClick = { viewModel.deleteHistoryItem(item.id) }) { Icon(Icons.Default.Delete, "حذف") }
                 }
             }
         }
@@ -544,10 +465,8 @@ private fun CalibrationTab(state: MainUiState, viewModel: MainViewModel) {
                         Text("به‌روزرسانی خودکار برنامه", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                         Text("نسخه فعلی: ${state.currentVersionName}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    OutlinedButton(onClick = { viewModel.checkForAppUpdate(silent = false) }, enabled = !state.isCheckingUpdate && !state.isDownloadingUpdate) {
-                        Icon(Icons.Default.Refresh, contentDescription = null)
-                        Spacer(Modifier.width(6.dp))
-                        Text(if (state.isCheckingUpdate) "در حال بررسی..." else "بررسی آپدیت")
+                    OutlinedButton(onClick = { viewModel.checkForAppUpdate(false) }, enabled = !state.isCheckingUpdate && !state.isDownloadingUpdate) {
+                        Icon(Icons.Default.Refresh, null); Spacer(Modifier.width(6.dp)); Text(if (state.isCheckingUpdate) "در حال بررسی..." else "بررسی آپدیت")
                     }
                 }
                 state.availableUpdate?.let { upd ->
@@ -594,8 +513,7 @@ private fun CalibrationTab(state: MainUiState, viewModel: MainViewModel) {
                 RiskProfile.entries.forEach { profile ->
                     Row(modifier = Modifier.fillMaxWidth().clickable { selectedRisk = profile }.padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                         RadioButton(selected = selectedRisk == profile, onClick = { selectedRisk = profile })
-                        Spacer(Modifier.width(6.dp))
-                        Text(profile.label, style = MaterialTheme.typography.bodyMedium)
+                        Spacer(Modifier.width(6.dp)); Text(profile.label, style = MaterialTheme.typography.bodyMedium)
                     }
                 }
             }
