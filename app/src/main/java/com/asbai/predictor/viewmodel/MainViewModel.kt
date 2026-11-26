@@ -4,7 +4,6 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.asbai.predictor.data.SettingsRepository
-import com.asbai.predictor.engine.MultiSiteParser
 import com.asbai.predictor.engine.PageReaderEngine
 import com.asbai.predictor.engine.QuantPredictor
 import com.asbai.predictor.engine.RaceSection
@@ -81,9 +80,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     )
     val uiState: StateFlow<MainUiState> = _uiState.asStateFlow()
 
-    init {
-        checkForAppUpdate(silent = true)
-    }
+    init { checkForAppUpdate(silent = true) }
 
     fun checkForAppUpdate(silent: Boolean = false) {
         viewModelScope.launch {
@@ -104,11 +101,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 },
                 onFailure = { err ->
                     _uiState.update {
-                        it.copy(
-                            isCheckingUpdate = false,
-                            errorMessage = if (silent) it.errorMessage else (err.message ?: "خطا در بررسی آپدیت"),
-                            statusMessage = if (silent) it.statusMessage else null
-                        )
+                        it.copy(isCheckingUpdate = false, errorMessage = if (silent) it.errorMessage else (err.message ?: "خطا در بررسی آپدیت"), statusMessage = if (silent) it.statusMessage else null)
                     }
                 }
             )
@@ -119,13 +112,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val update = _uiState.value.availableUpdate ?: return
         viewModelScope.launch {
             _uiState.update { it.copy(isDownloadingUpdate = true, updateDownloadProgress = 0, errorMessage = null, statusMessage = "در حال دانلود...") }
-            AppUpdater.downloadAndInstall(appContext, update.downloadUrl) { pct ->
-                _uiState.update { it.copy(updateDownloadProgress = pct) }
-            }.fold(
+            AppUpdater.downloadAndInstall(appContext, update.downloadUrl) { pct -> _uiState.update { it.copy(updateDownloadProgress = pct) } }.fold(
                 onSuccess = { started ->
-                    _uiState.update {
-                        it.copy(isDownloadingUpdate = false, statusMessage = if (started) "فایل آماده شد؛ روی «به‌روزرسانی» بزنید." else "مجوز نصب را فعال کنید.")
-                    }
+                    _uiState.update { it.copy(isDownloadingUpdate = false, statusMessage = if (started) "فایل آماده شد؛ روی «به‌روزرسانی» بزنید." else "مجوز نصب را فعال کنید.") }
                 },
                 onFailure = { err ->
                     _uiState.update { it.copy(isDownloadingUpdate = false, errorMessage = err.message ?: "خطای نصب آپدیت", statusMessage = null) }
@@ -144,59 +133,44 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun updateRaceDataInput(text: String) {
         viewModelScope.launch {
-            val sections = withContext(Dispatchers.Default) { MultiSiteParser.splitRaceSections(text) }
-            _uiState.update {
-                it.copy(raceDataInput = text, rawPayloadWithJson = "", raceSections = sections, selectedSectionIndex = 0, scratchedKeys = emptySet())
-            }
+            val sections = withContext(Dispatchers.Default) { PageReaderEngine.splitRaceSections(text, _uiState.value.urlInput) }
+            _uiState.update { it.copy(raceDataInput = text, rawPayloadWithJson = "", raceSections = sections, selectedSectionIndex = 0, scratchedKeys = emptySet()) }
         }
     }
 
     fun selectRaceSection(index: Int) {
-        val sections = _uiState.value.raceSections
-        if (index !in sections.indices) return
+        if (index !in _uiState.value.raceSections.indices) return
         _uiState.update { it.copy(selectedSectionIndex = index, scratchedKeys = emptySet()) }
         analyzeCurrentRace()
     }
 
     fun toggleScratchHorse(number: String, horseName: String) {
         val key = "$number:$horseName"
-        val current = _uiState.value.scratchedKeys.toMutableSet()
-        if (key in current) current.remove(key) else current.add(key)
-        _uiState.update { it.copy(scratchedKeys = current) }
+        val cur = _uiState.value.scratchedKeys.toMutableSet()
+        if (key in cur) cur.remove(key) else cur.add(key)
+        _uiState.update { it.copy(scratchedKeys = cur) }
         analyzeCurrentRace()
     }
 
     fun fetchFromSite(customUrl: String? = null) {
         val targetUrl = (customUrl ?: _uiState.value.urlInput).trim()
         viewModelScope.launch {
-            _uiState.update {
-                it.copy(isFetchingSite = true, urlInput = targetUrl, errorMessage = null, statusMessage = "در حال دریافت صفحه...", needsWebViewHint = false)
-            }
+            _uiState.update { it.copy(isFetchingSite = true, urlInput = targetUrl, errorMessage = null, statusMessage = "در حال دریافت صفحه...", needsWebViewHint = false) }
             scraper.fetchPage(targetUrl).fold(
                 onSuccess = { page ->
                     val (sections, parsedCount) = withContext(Dispatchers.Default) {
-                        val secs = MultiSiteParser.splitRaceSections(page.extractedText)
+                        val secs = PageReaderEngine.splitRaceSections(page.extractedText, page.url)
                         val chunk = secs.firstOrNull()?.rawChunk ?: page.extractedText
                         val cnt = PageReaderEngine.read(chunk, page.title, page.url).context.horses.size
                         secs to cnt
                     }
                     _uiState.update {
                         it.copy(
-                            isFetchingSite = false,
-                            urlInput = page.url,
-                            pageTitle = page.title,
-                            raceDataInput = page.extractedText,
-                            rawPayloadWithJson = "",
-                            raceSections = sections,
-                            selectedSectionIndex = 0,
-                            scratchedKeys = emptySet(),
-                            discoveredLinks = page.links,
-                            needsWebViewHint = page.likelyNeedsWebView || parsedCount < 2,
-                            statusMessage = if (parsedCount >= 2) {
-                                "اطلاعات دریافت شد ($parsedCount اسب)."
-                            } else {
-                                "جدول اسب‌ها با جاوااسکریپت لود می‌شود؛ از تب «مرورگر سایت» بازش کنید."
-                            }
+                            isFetchingSite = false, urlInput = page.url, pageTitle = page.title,
+                            raceDataInput = page.extractedText, rawPayloadWithJson = "",
+                            raceSections = sections, selectedSectionIndex = 0, scratchedKeys = emptySet(),
+                            discoveredLinks = page.links, needsWebViewHint = page.likelyNeedsWebView || parsedCount < 2,
+                            statusMessage = if (parsedCount >= 2) "اطلاعات دریافت شد ($parsedCount اسب)." else "جدول اسب‌ها با جاوااسکریپت لود می‌شود؛ از تب «مرورگر سایت» بازش کنید."
                         )
                     }
                     if (parsedCount >= 2) analyzeCurrentRace()
@@ -211,19 +185,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun onWebViewExtracted(title: String, url: String, rawExtracted: String) {
         viewModelScope.launch {
             val cleanVisible = PageReaderEngine.stripCapturedJsonBlocks(rawExtracted)
-            val sections = withContext(Dispatchers.Default) { MultiSiteParser.splitRaceSections(cleanVisible) }
+            val sections = withContext(Dispatchers.Default) { PageReaderEngine.splitRaceSections(cleanVisible, url) }
             _uiState.update {
                 it.copy(
-                    selectedTab = AppTab.PREDICT,
-                    urlInput = url,
-                    pageTitle = title.ifBlank { "صفحه زنده مسابقات" },
-                    raceDataInput = cleanVisible,
-                    rawPayloadWithJson = rawExtracted,
-                    raceSections = sections,
-                    selectedSectionIndex = 0,
-                    scratchedKeys = emptySet(),
-                    needsWebViewHint = false,
-                    errorMessage = null
+                    selectedTab = AppTab.PREDICT, urlInput = url, pageTitle = title.ifBlank { "صفحه زنده مسابقات" },
+                    raceDataInput = cleanVisible, rawPayloadWithJson = rawExtracted,
+                    raceSections = sections, selectedSectionIndex = 0, scratchedKeys = emptySet(),
+                    needsWebViewHint = false, errorMessage = null
                 )
             }
             analyzeCurrentRace()
@@ -233,30 +201,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun analyzeCurrentRace() {
         val state = _uiState.value
         val activeSection = state.raceSections.getOrNull(state.selectedSectionIndex)
-        val sourcePayload = when {
-            activeSection != null -> activeSection.rawChunk
-            state.rawPayloadWithJson.isNotBlank() -> state.rawPayloadWithJson
-            else -> state.raceDataInput
-        }
+        val sourcePayload = activeSection?.rawChunk ?: state.rawPayloadWithJson.ifBlank { state.raceDataInput }
         if (sourcePayload.isBlank()) {
             _uiState.update { it.copy(errorMessage = "ابتدا اطلاعات مسابقه را دریافت یا وارد کنید.") }
             return
         }
-
         val targetTitle = if (activeSection != null) "${state.pageTitle} — ${activeSection.label}" else state.pageTitle
 
         viewModelScope.launch {
             _uiState.update { it.copy(isAnalyzing = true, errorMessage = null) }
             val result = withContext(Dispatchers.Default) {
-                QuantPredictor.predict(
-                    rawText = sourcePayload,
-                    pageTitle = targetTitle,
-                    sourceUrl = state.urlInput,
-                    weights = state.weights,
-                    riskProfile = state.riskProfile,
-                    newsNotes = state.newsNotesInput,
-                    scratchedKeys = state.scratchedKeys
-                )
+                QuantPredictor.predict(sourcePayload, targetTitle, state.urlInput, state.weights, state.riskProfile, state.newsNotesInput, state.scratchedKeys)
             }
             result.fold(
                 onSuccess = { out ->
@@ -265,14 +220,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val saved = SavedPrediction(id, timeStr, state.urlInput, state.raceDataInput.take(300), out.report, out.featureVectors)
                     repo.addHistory(saved)
                     _uiState.update {
-                        it.copy(
-                            isAnalyzing = false,
-                            currentReport = out.report,
-                            currentPredictionId = id,
-                            livePreScores = out.report.preScores,
-                            history = repo.getHistory(),
-                            statusMessage = "تحلیل آماده شد (${out.report.horseAnalyses.size} اسب | ${out.report.extractionSource})"
-                        )
+                        it.copy(isAnalyzing = false, currentReport = out.report, currentPredictionId = id, livePreScores = out.report.preScores, history = repo.getHistory(), statusMessage = "تحلیل آماده شد (${out.report.horseAnalyses.size} اسب | ${out.report.extractionSource})")
                     }
                 },
                 onFailure = { err ->
@@ -285,45 +233,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun recordActualWinner(winnerNumber: String, winnerName: String) {
         val predId = _uiState.value.currentPredictionId ?: return
         val saved = repo.getHistory().firstOrNull { it.id == predId } ?: return
-        if (saved.report.actualWinnerName.isNotBlank()) {
-            showStatus("برنده این مسابقه قبلاً ثبت شده و مدل آموزش دیده است.")
-            return
-        }
+        if (saved.report.actualWinnerName.isNotBlank()) { showStatus("برنده این مسابقه قبلاً ثبت شده است."); return }
         val (newWeights, hitTxt) = QuantPredictor.calibrate(_uiState.value.weights, saved, "$winnerNumber:$winnerName")
         repo.saveWeights(newWeights)
         val updatedReport = saved.report.copy(actualWinnerName = "#$winnerNumber $winnerName")
         repo.updateHistoryItem(saved.copy(report = updatedReport))
         _uiState.update {
-            it.copy(
-                weights = newWeights,
-                currentReport = updatedReport,
-                history = repo.getHistory(),
-                statusMessage = "$hitTxt (دقت ۳تای اول: ${newWeights.top3Hits}/${newWeights.totalRacesLogged})"
-            )
+            it.copy(weights = newWeights, currentReport = updatedReport, history = repo.getHistory(), statusMessage = "$hitTxt (دقت ۳تای اول: ${newWeights.top3Hits}/${newWeights.totalRacesLogged})")
         }
     }
 
     fun saveCalibration(weights: ModelWeights, riskProfile: RiskProfile) {
-        repo.saveWeights(weights)
-        repo.saveRiskProfile(riskProfile)
+        repo.saveWeights(weights); repo.saveRiskProfile(riskProfile)
         _uiState.update { it.copy(weights = weights, riskProfile = riskProfile, statusMessage = "تنظیمات و وزن‌ها ذخیره شدند.", errorMessage = null) }
     }
 
-    fun resetWeights() {
-        _uiState.update { it.copy(weights = repo.resetWeights(), statusMessage = "وزن‌ها بازنشانی شدند.") }
-    }
+    fun resetWeights() { _uiState.update { it.copy(weights = repo.resetWeights(), statusMessage = "وزن‌ها بازنشانی شدند.") } }
 
     fun openHistoryItem(item: SavedPrediction) {
         _uiState.update {
-            it.copy(
-                currentReport = item.report,
-                currentPredictionId = item.id,
-                livePreScores = item.report.preScores,
-                scratchedKeys = item.report.scratchedKeys.toSet(),
-                urlInput = item.sourceUrl,
-                selectedTab = AppTab.PREDICT,
-                statusMessage = "گزارش تاریخچه (${item.timestamp}) بارگذاری شد."
-            )
+            it.copy(currentReport = item.report, currentPredictionId = item.id, livePreScores = item.report.preScores, scratchedKeys = item.report.scratchedKeys.toSet(), urlInput = item.sourceUrl, selectedTab = AppTab.PREDICT, statusMessage = "گزارش تاریخچه (${item.timestamp}) بارگذاری شد.")
         }
     }
 
