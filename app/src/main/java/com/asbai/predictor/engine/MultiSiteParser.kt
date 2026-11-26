@@ -72,13 +72,14 @@ object MultiSiteParser {
 
         var distMeters: Int? = parseImperialDistance(lines)
         var surface = ""
-        for (line in lines.take(65)) {
+        for (i in lines.indices) {
+            val pairLine = if (i + 1 < lines.size) "${lines[i]} ${lines[i + 1]}" else lines[i]
             if (distMeters == null) {
-                val dm = distMetricRegex.find(line)
+                val dm = Regex("""(\d{3,4})\s*(?:متر|m\b)""", RegexOption.IGNORE_CASE).find(pairLine)
                 val d = dm?.groupValues?.get(1)?.toIntOrNull()
                 if (d != null && d in 800..4500) distMeters = d
             }
-            val lower = line.lowercase()
+            val lower = lines[i].lowercase()
             if (surface.isBlank()) {
                 surface = when {
                     "çim" in lower || "چمن" in lower || "turf" in lower -> "چمن"
@@ -87,10 +88,11 @@ object MultiSiteParser {
                     else -> ""
                 }
             }
-            if (distMeters != null && surface.isNotBlank()) break
+            if (distMeters != null && surface.isNotBlank() && i > 40) break
         }
 
         val candidates = listOf(
+            parseAsbdavaniVerticalBlocks(lines),
             parseAsbdavaniTables(lines),
             parseAsbdavaniCardBlocks(lines),
             parseUnibetFrankelCards(lines),
@@ -112,7 +114,113 @@ object MultiSiteParser {
         return ParsedRaceContext(cleanTitle, distMeters, surface, horses)
     }
 
-    // استخراج دقیق جدول asbdavani.app
+    // پارسر دقیق ساختار خط‌به‌خط asbdavani.app (پدر / مادر -> ن یا م -> سن -> وزن -> Kg -> IOR -> روز قبل -> عملکرد -> مالک/مربی/چابکسوار)
+    private fun parseAsbdavaniVerticalBlocks(lines: List<String>): List<ParsedHorseRow> {
+        val slashAnchors = mutableListOf<Int>()
+        for (k in 2 until lines.size - 2) {
+            if (lines[k] == "/") {
+                val sire = lines[k - 1]
+                val dam = lines[k + 1]
+                val gender = lines[k + 2]
+                val isPedigree = (gender == "ن" || gender == "م") &&
+                    Regex("""[\u0600-\u06FFa-zA-Z]""").containsMatchIn(sire) &&
+                    Regex("""[\u0600-\u06FFa-zA-Z]""").containsMatchIn(dam)
+                if (isPedigree) slashAnchors.add(k)
+            }
+        }
+        if (slashAnchors.size < 2) return emptyList()
+
+        val footerIdx = lines.indexOfFirst { it == "سایت اسبدوانی" || it == "دسترسی سریع" }
+            .takeIf { it > slashAnchors.first() } ?: lines.size
+
+        val out = mutableListOf<ParsedHorseRow>()
+        for (pos in slashAnchors.indices) {
+            val slashIdx = slashAnchors[pos]
+            val nameIdx = slashIdx - 2
+            if (nameIdx < 0 || nameIdx >= footerIdx) continue
+
+            val horseName = lines[nameIdx].trim()
+            if (horseName.length < 2 || horseName == "مالک / مربی / چابکسوار") continue
+
+            val nextNameIdx = slashAnchors.getOrNull(pos + 1)?.let { minOf(it - 2, footerIdx) } ?: footerIdx
+            val block = lines.subList(nameIdx, nextNameIdx)
+
+            // وزن و IOR بر اساس خط «Kg»
+            var weightKg: Double? = null
+            var ior: Double? = null
+            val kgIdx = block.indexOfFirst { it.equals("Kg", ignoreCase = true) }
+            if (kgIdx > 0) {
+                weightKg = block[kgIdx - 1].toDoubleOrNull()?.takeIf { it in 40.0..75.0 }
+                if (kgIdx + 1 < block.size) {
+                    ior = block[kgIdx + 1].toDoubleOrNull()?.takeIf { it in 0.0..150.0 }
+                }
+            }
+
+            // روزهای استراحت بر اساس «روز قبل»
+            var daysAgo: Int? = null
+            var recentDigits: List<Int> = emptyList()
+            val daysIdx = block.indexOfFirst { it == "روز قبل" || it.contains("روز قبل") }
+            if (daysIdx >= 0) {
+                val inlineDays = daysAgoRegex.find(block[daysIdx])?.groupValues?.get(1)?.toIntOrNull()
+                daysAgo = inlineDays ?: if (daysIdx > 0) block[daysIdx - 1].toIntOrNull() else null
+                val nextAfterDays = block.getOrNull(daysIdx + 1).orEmpty()
+                if (Regex("""^\d+(?:-\d+)+$""").matches(nextAfterDays)) {
+                    recentDigits = nextAfterDays.split("-").mapNotNull { it.toIntOrNull() }
+                }
+            }
+
+            // فرم W - P - S / N (روی ۷ خط متوالی)
+            var formString: String? = null
+            var formEndLocalIdx = -1
+            for (b in 4 until block.size - 6) {
+                if (block[b + 1] == "-" && block[b + 3] == "-" && block[b + 5] == "/") {
+                    val w = block[b].toIntOrNull()
+                    val p = block[b + 2].toIntOrNull()
+                    val s = block[b + 4].toIntOrNull()
+                    val n = block[b + 6].toIntOrNull()
+                    if (w != null && p != null && s != null && n != null) {
+                        formString = "$w-$p-$s/$n"
+                        formEndLocalIdx = b + 6
+                        break
+                    }
+                }
+            }
+            if (formString == null) {
+                val joined = block.joinToString(" ")
+                formString = extractCleanAsbForm(joined)
+            }
+
+            // مالک / مربی / چابکسوار بلافاصله بعد از عملکرد
+            val peopleStart = if (formEndLocalIdx >= 0) formEndLocalIdx + 1 else (daysIdx + 1).coerceAtLeast(6)
+            val tailLines = if (peopleStart < block.size) {
+                block.subList(peopleStart, block.size)
+                    .filter { ln -> ln.length >= 2 && !asbTimeRegex.matches(ln) && !Regex("""^\d+$""").matches(ln) }
+            } else emptyList()
+
+            val owner = tailLines.getOrElse(0) { "" }
+            val trainer = tailLines.getOrElse(1) { "" }
+            val jockey = tailLines.getOrElse(2) { "" }
+            val bestTime = block.firstNotNullOfOrNull { parseAsbTimeSeconds(it) }
+
+            out.add(
+                ParsedHorseRow(
+                    number = (out.size + 1).toString(),
+                    horseName = horseName.take(40),
+                    weightKg = weightKg,
+                    rating = ior,
+                    formString = formString,
+                    recentDigits = recentDigits,
+                    daysSinceLast = daysAgo,
+                    bestTimeSec = bestTime,
+                    owner = owner,
+                    trainer = trainer,
+                    jockey = jockey
+                )
+            )
+        }
+        return out
+    }
+
     private fun parseAsbdavaniTables(lines: List<String>): List<ParsedHorseRow> {
         val out = mutableListOf<ParsedHorseRow>()
         var inTable = false
@@ -184,7 +292,6 @@ object MultiSiteParser {
         return out
     }
 
-    // استخراج از متن کارت‌های asbdavani.app (بر پایه «پیراهن شماره X» حتی بدون table)
     private fun parseAsbdavaniCardBlocks(lines: List<String>): List<ParsedHorseRow> {
         val shirtIndices = lines.indices.filter { shirtNumRegex.containsMatchIn(lines[it]) }
         if (shirtIndices.size < 2) return emptyList()
@@ -194,82 +301,52 @@ object MultiSiteParser {
             val idx = shirtIndices[pos]
             val prevEnd = if (pos > 0) shirtIndices[pos - 1] else maxOf(0, idx - 3)
             val nextIdx = shirtIndices.getOrNull(pos + 1) ?: minOf(lines.size, idx + 12)
-
-            // متوقف شدن اگر وارد دور بعدی شد
             val stopAtHeader = (idx + 1 until nextIdx).firstOrNull { lines[it].contains("مقام (دپار)") } ?: nextIdx
-            val blockLines = lines.subList(idx, stopAtHeader)
-            val blockJoined = blockLines.joinToString(" · ")
-
+            val blockJoined = lines.subList(idx, stopAtHeader).joinToString(" · ")
             val shirtNum = shirtNumRegex.find(lines[idx])?.groupValues?.get(1) ?: (out.size + 1).toString()
 
-            // بررسی دپار از خط‌های بلافاصله قبل از «پیراهن شماره»
             var gate: Int? = null
             for (gIdx in (idx - 1) downTo maxOf(prevEnd + 1, idx - 3)) {
                 val gm = Regex("""^\d{1,2}\s*\(\s*(\d{1,2})\s*\)\.?$""").find(lines[gIdx])
-                if (gm != null) {
-                    gate = gm.groupValues[1].toIntOrNull()
-                    break
-                }
+                if (gm != null) { gate = gm.groupValues[1].toIntOrNull(); break }
             }
 
-            // استخراج نام اسب از خط «پیراهن شماره X ...» یا خط بعدی اگر فقط شماره بود
             var name = extractAsbHorseName(lines[idx])
-            if (name.length < 2 && idx + 1 < stopAtHeader) {
-                name = extractAsbHorseName(lines[idx + 1])
-            }
+            if (name.length < 2 && idx + 1 < stopAtHeader) name = extractAsbHorseName(lines[idx + 1])
             if (name.length < 2) continue
 
             val kgIor = asbKgIorRegex.find(blockJoined)
-            val weight = kgIor?.groupValues?.get(1)?.toDoubleOrNull()?.takeIf { it in 40.0..75.0 }
-            val ior = kgIor?.groupValues?.get(2)?.toDoubleOrNull()
-            val daysAgo = daysAgoRegex.find(blockJoined)?.groupValues?.get(1)?.toIntOrNull()
-            val formStr = extractCleanAsbForm(blockJoined)
-            val bestTime = parseAsbTimeSeconds(blockJoined)
-
-            if (out.none { it.number == shirtNum && it.horseName == name }) {
-                out.add(
-                    ParsedHorseRow(
-                        number = shirtNum,
-                        gate = gate,
-                        horseName = name,
-                        weightKg = weight,
-                        rating = ior,
-                        formString = formStr,
-                        daysSinceLast = daysAgo,
-                        bestTimeSec = bestTime
-                    )
+            out.add(
+                ParsedHorseRow(
+                    number = shirtNum,
+                    gate = gate,
+                    horseName = name,
+                    weightKg = kgIor?.groupValues?.get(1)?.toDoubleOrNull()?.takeIf { it in 40.0..75.0 },
+                    rating = kgIor?.groupValues?.get(2)?.toDoubleOrNull(),
+                    formString = extractCleanAsbForm(blockJoined),
+                    daysSinceLast = daysAgoRegex.find(blockJoined)?.groupValues?.get(1)?.toIntOrNull(),
+                    bestTimeSec = parseAsbTimeSeconds(blockJoined)
                 )
-            }
+            )
         }
         return out
     }
 
     private fun extractAsbHorseName(rawCell: String): String {
-        val afterShirt = rawCell
-            .replace(Regex("""پیراهن\s*شماره\s*\d+\s*·?\s*"""), "")
-            .trim()
+        val afterShirt = rawCell.replace(Regex("""پیراهن\s*شماره\s*\d+\s*·?\s*"""), "").trim()
         val segments = afterShirt.split("·").map { it.trim() }.filter { it.isNotEmpty() }
-        val candidate = segments.firstOrNull { seg ->
-            !seg.startsWith("(") && !seg.contains("/") && seg.length >= 2
-        } ?: segments.firstOrNull().orEmpty().substringBefore("/")
-
-        return candidate
-            .replace(Regex("""\([^)]*\)"""), "")
-            .replace(Regex("""\s+"""), " ")
-            .trim()
-            .take(40)
+        val candidate = segments.firstOrNull { !it.startsWith("(") && !it.contains("/") && it.length >= 2 }
+            ?: segments.firstOrNull().orEmpty().substringBefore("/")
+        return candidate.replace(Regex("""\([^)]*\)"""), "").replace(Regex("""\s+"""), " ").trim().take(40)
     }
 
-    // رفع چسبیدن رقم آخر فرم قبلی به تعداد برد (مثل 4-50 -0-0 /2 یا 111 -2-0 /12)
     private fun extractCleanAsbForm(text: String): String? {
         val m = formRegex.find(text) ?: return null
         var w = m.groupValues[1].toIntOrNull() ?: 0
         val p = m.groupValues[2].toIntOrNull() ?: 0
         val s = m.groupValues[3].toIntOrNull() ?: 0
         val n = (m.groupValues[4].toIntOrNull() ?: 0).coerceAtLeast(1)
-        if (w > n && w >= 10) {
-            w %= 10
-        }
+        if (w > n && w >= 10) w %= 10
         return "$w-$p-$s/$n"
     }
 
@@ -282,20 +359,17 @@ object MultiSiteParser {
         return mins * 60.0 + secs + frac
     }
 
-    // پارسر اختصاصی Unibet
     private fun parseUnibetFrankelCards(lines: List<String>): List<ParsedHorseRow> {
         val headerIndices = lines.indices.filter { unibetHeaderRegex.matches(lines[it]) }
         if (headerIndices.size < 2) return emptyList()
 
-        val footerIdx = lines.indexOfFirst {
-            it.startsWith("Weergave odds", true) || it.startsWith("Wat kost gokken", true)
-        }.takeIf { it > 0 } ?: lines.size
+        val footerIdx = lines.indexOfFirst { it.startsWith("Weergave odds", true) || it.startsWith("Wat kost gokken", true) }
+            .takeIf { it > 0 } ?: lines.size
 
         val out = mutableListOf<ParsedHorseRow>()
         for (hPos in headerIndices.indices) {
             val idx = headerIndices[hPos]
             if (idx >= footerIdx) break
-
             val hm = unibetHeaderRegex.find(lines[idx]) ?: continue
             val number = hm.groupValues[1]
             val gate = hm.groupValues[2].toIntOrNull()
@@ -303,20 +377,11 @@ object MultiSiteParser {
             if (horseName.length < 2) continue
 
             val recentDigits = if (idx - 1 >= 0 && unibetFormRegex.matches(lines[idx - 1])) {
-                lines[idx - 1].map { ch ->
-                    when {
-                        ch == '0' -> 10
-                        ch.isDigit() -> ch.digitToInt()
-                        else -> 9
-                    }
-                }
+                lines[idx - 1].map { ch -> if (ch == '0') 10 else if (ch.isDigit()) ch.digitToInt() else 9 }
             } else emptyList()
 
             val nextIdx = headerIndices.getOrNull(hPos + 1)?.let { minOf(it, footerIdx) } ?: footerIdx
-            var jockey = ""
-            var trainer = ""
-            var weightKg: Double? = null
-            var lastOdds: Double? = null
+            var jockey = ""; var trainer = ""; var weightKg: Double? = null; var lastOdds: Double? = null
 
             for (k in (idx + 1) until nextIdx) {
                 val ln = lines[k]
@@ -324,26 +389,27 @@ object MultiSiteParser {
                 if (jockey.isBlank() && Regex("""^J[A-Z]""").containsMatchIn(ln)) {
                     jockey = ln.substring(1).replace(Regex("""\(\d+(?:\.\d+)?\).*$"""), "").replace(weightStoneRegex, "").trim()
                 }
-                if (trainer.isBlank() && Regex("""^T[A-Z]""").containsMatchIn(ln)) {
-                    trainer = ln.substring(1).trim()
-                }
+                if (trainer.isBlank() && Regex("""^T[A-Z]""").containsMatchIn(ln)) trainer = ln.substring(1).trim()
                 val sw = weightStoneRegex.find(ln)
                 if (weightKg == null && sw != null) {
-                    val stones = sw.groupValues[1].toDoubleOrNull() ?: 0.0
-                    val lbs = sw.groupValues[2].toDoubleOrNull() ?: 0.0
-                    val kg = ((stones * 14.0 + lbs) * 0.45359237 * 10.0).roundToInt() / 10.0
+                    val kg = (((sw.groupValues[1].toDoubleOrNull() ?: 0.0) * 14.0 + (sw.groupValues[2].toDoubleOrNull() ?: 0.0)) * 0.45359237 * 10.0).roundToInt() / 10.0
                     if (kg in 40.0..75.0) weightKg = kg
                 }
                 val od = parseOddsToken(ln)
                 if (od != null && od > 1.0) lastOdds = od
             }
-
             out.add(ParsedHorseRow(number, gate, horseName, weightKg, recentDigits = recentDigits, marketOdds = lastOdds, trainer = trainer, jockey = jockey))
         }
         return out
     }
 
     private fun extractRaceHeading(lines: List<String>): String? {
+        val asbIdx = lines.indexOfFirst { it == "جدول مسابقات" }
+        if (asbIdx >= 0 && asbIdx + 1 < lines.size && lines[asbIdx + 1].contains("هفته")) {
+            val dorIdx = lines.indexOfFirst { it == "دور" }
+            val roundTxt = if (dorIdx >= 0 && dorIdx + 1 < lines.size) " — دور ${lines[dorIdx + 1]}" else ""
+            return "${lines[asbIdx + 1]}$roundTxt"
+        }
         val asbWeek = lines.firstOrNull { it.contains("جدول مسابقات") && it.contains("هفته") }
         if (asbWeek != null) return asbWeek.take(65)
         val raceLine = lines.firstOrNull { Regex("""^Race\s+\d+""", RegexOption.IGNORE_CASE).containsMatchIn(it) }
@@ -370,8 +436,7 @@ object MultiSiteParser {
             }
             val furMatch = Regex("""\b(\d+)\s*f\b""", RegexOption.IGNORE_CASE).find(ln)
             if (furMatch != null) {
-                val f = furMatch.groupValues[1].toDoubleOrNull() ?: 0.0
-                val total = (f * 201.168).roundToInt()
+                val total = ((furMatch.groupValues[1].toDoubleOrNull() ?: 0.0) * 201.168).roundToInt()
                 if (total in 700..5000) return total
             }
         }
@@ -383,8 +448,7 @@ object MultiSiteParser {
         var inTable = false
         var idxNum = -1; var idxName = -1; var idxWeight = -1; var idxJockey = -1
         var idxOwner = -1; var idxTrainer = -1; var idxGate = -1; var idxHp = -1
-        var idxSon6 = -1; var idxKgs = -1; var idxS20 = -1; var idxBestTime = -1
-        var idxGny = -1; var idxAgf = -1
+        var idxSon6 = -1; var idxKgs = -1; var idxS20 = -1; var idxBestTime = -1; var idxGny = -1; var idxAgf = -1
 
         for (line in lines) {
             if (!line.contains("|")) continue
