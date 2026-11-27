@@ -60,9 +60,7 @@ object QuantPredictor {
         val avgWeight = activeHorses.mapNotNull { it.weightKg }.takeIf { it.size >= 2 }?.average()
         val distFactor = if ((ctx.distanceMeters ?: 1400) >= 1600) 1.25 else 1.0
 
-        // حذف حاشیه سود ضرایب (Overround Removal از ایده Arena AI)
         val normalizedMarketProbs = computeNormalizedMarketProbs(activeHorses)
-
         val trendSlopes = activeHorses.map { computeFormTrendSlope(it.recentDigits) }
         val rawFormScores = activeHorses.mapIndexed { i, h -> computeRawFormScore(h, trendSlopes[i]) }
         val avgFormScore = rawFormScores.average()
@@ -81,15 +79,19 @@ object QuantPredictor {
             } else 0.0
             val fFreshness = computeFreshnessFeature(h.daysSinceLast)
 
-            // فرمول دقیق دپار از 0.00 تا 1.00: (draw - 1) / (n - 1)
             val drawPct = h.gate?.let { g ->
                 ((g - 1).toDouble() / (fieldSize - 1).coerceAtLeast(1)).coerceIn(0.0, 1.0)
             }
             val fDraw = computeDrawFeature(drawPct)
+
             val marketProb = normalizedMarketProbs[idx]
-            val fMarket = if (marketProb != null) {
-                ((marketProb - (100.0 / fieldSize)) / 22.0).coerceIn(-1.0, 1.0)
+            val steamRatio = if (h.openingOdds != null && h.marketOdds != null && h.openingOdds > 1.0) {
+                ((h.openingOdds - h.marketOdds) / h.openingOdds).coerceIn(-0.4, 0.4)
             } else 0.0
+            val baseMarket = if (marketProb != null) {
+                ((marketProb - (100.0 / fieldSize)) / 20.0)
+            } else 0.0
+            val fMarket = (baseMarket + (steamRatio * 1.8)).coerceIn(-1.0, 1.0)
 
             val features = listOf(fForm, fSpeed, fRating, fWeight, fFreshness, fDraw, fMarket)
             val techScore = (fForm * effWeights.formWeight) +
@@ -97,15 +99,16 @@ object QuantPredictor {
                 (fRating * effWeights.ratingWeight) +
                 (fWeight * effWeights.weightDiffWeight) +
                 (fFreshness * effWeights.freshnessWeight) +
-                (fDraw * effWeights.drawWeight)
+                (fDraw * effWeights.drawWeight) +
+                (steamRatio * 0.65)
             val totalScore = techScore + (fMarket * effWeights.marketWeight)
             val (winRate, placeRate) = extractWinPlaceRates(h)
 
-            ComputedHorse(h, features, techScore, totalScore, drawPct, marketProb, winRate, placeRate, trendSlopes[idx])
+            ComputedHorse(h, features, techScore, totalScore, drawPct, marketProb, winRate, placeRate, trendSlopes[idx], steamRatio)
         }
 
-        val winProbs = softmaxPercents(computed.map { it.totalScore }, temp = 1.45)
-        val techProbs = softmaxPercents(computed.map { it.techScore }, temp = 1.35)
+        val winProbs = softmaxPercents(computed.map { it.totalScore }, temp = 1.10)
+        val techProbs = softmaxPercents(computed.map { it.techScore }, temp = 1.10)
 
         val marketRankedKeys = computed
             .filter { it.marketProb != null }
@@ -182,6 +185,7 @@ object QuantPredictor {
 
             val marketBadge = when {
                 idx <= 1 && mRank != null && mRank <= 2 -> "🥇 طلایی (توافق بازار)"
+                c.steamRatio >= 0.08 -> "🔥 پول هوشمند (افت ضریب)"
                 idx <= 2 && (e.edgePct ?: 0) >= 12 -> "🥈 نقره‌ای (شکار ارزش)"
                 else -> ""
             }
@@ -237,8 +241,8 @@ object QuantPredictor {
         }
 
         val darkHorse = enriched.drop(1)
-            .filter { (it.edgePct ?: 0) >= 12 || it.techProb >= 12 }
-            .maxByOrNull { it.edgePct ?: it.techProb }
+            .filter { (it.edgePct ?: 0) >= 12 || it.computed.steamRatio >= 0.08 || it.techProb >= 12 }
+            .maxByOrNull { (it.edgePct ?: 0) + (it.computed.steamRatio * 100).roundToInt() }
             ?.let { e ->
                 val c = e.computed
                 val edgeTxt = e.edgePct?.let { "اختلاف ارزش +$it٪ نسبت به بازار دارد (Kelly ${fmt1(e.quarterKellyPct)}٪)" }
@@ -355,7 +359,7 @@ object QuantPredictor {
     }
 
     private fun computeFormTrendSlope(digits: List<Int>): Double {
-        val slice = digits.takeLast(5)
+        val slice = digits.takeLast(5).map { it.coerceIn(1, 8).toDouble() }
         if (slice.size < 3) return 0.0
         val n = slice.size.toDouble()
         val meanX = (n - 1.0) / 2.0
@@ -379,7 +383,7 @@ object QuantPredictor {
         val gap12 = enriched[0].winProb - enriched[1].winProb
 
         return if (gap12 >= 7 && n4 != null) {
-            "🎯 پیشنهاد ترکیب (سبک SPAIA): تک‌محور ◎ #${n1.number} ${n1.horseName} ثابت برای مقام اول، و چرخش روی #${n2.number}، #${n3.number}، #${n4.number} برای سکو"
+            "🎯 پیشنهاد ترکیب: تک‌محور ◎ #${n1.number} ${n1.horseName} ثابت برای اول، و چرخش روی #${n2.number}، #${n3.number}، #${n4.number}"
         } else {
             val fourth = n4?.let { "، #${it.number}" } ?: ""
             "🔄 پیشنهاد چرخشی (Box): ترکیب مدعیان نزدیک (#${n1.number}، #${n2.number}، #${n3.number}$fourth)"
@@ -408,22 +412,24 @@ object QuantPredictor {
             }
         }
         if (h.recentDigits.isNotEmpty()) {
-            val recencyWeights = listOf(0.5, 0.7, 0.9, 1.15, 1.45, 1.9)
+            val recencyWeights = listOf(0.6, 0.8, 1.0, 1.2, 1.45, 1.7)
             val slice = h.recentDigits.takeLast(6)
             val offset = recencyWeights.size - slice.size
             var sumW = 0.0
             var sumPts = 0.0
             slice.forEachIndexed { idx, pos ->
                 val w = recencyWeights[offset + idx]
+                val cappedPos = pos.coerceIn(1, 8)
                 sumW += w
-                sumPts += (((11.0 - pos.coerceIn(1, 10)) / 10.0) * 100.0) * w
+                sumPts += (((9.5 - cappedPos) / 8.5) * 95.0) * w
             }
-            val recentScore = (if (sumW > 0) sumPts / sumW else 50.0) + (h.s20Score?.let { (it - 16) * 1.5 } ?: 0.0)
+            val winCountBonus = slice.count { it == 1 } * 12.0
+            val placeCountBonus = slice.count { it in 2..3 } * 4.0
+            val recentScore = (if (sumW > 0) sumPts / sumW else 50.0) + winCountBonus + placeCountBonus + (h.s20Score?.let { (it - 16) * 1.5 } ?: 0.0)
             baseScore = if (hasMain) (baseScore * 0.55 + recentScore * 0.45) else recentScore
         }
 
-        // منفی بودن شیب یعنی رتبه رو به ۱ نزدیک‌تر شده (روند مثبت)
-        val trendAdjust = (-trendSlope * 2.5).coerceIn(-10.0, 10.0)
+        val trendAdjust = (-trendSlope * 1.3).coerceIn(-6.0, 6.0)
         return baseScore + trendAdjust
     }
 
@@ -457,10 +463,10 @@ object QuantPredictor {
 
     private fun computeDrawFeature(drawPct: Double?): Double = when {
         drawPct == null -> 0.0
-        drawPct <= 0.25 -> 0.65
-        drawPct <= 0.50 -> 0.25
-        drawPct <= 0.78 -> -0.15
-        else -> -0.55
+        drawPct <= 0.25 -> 0.35
+        drawPct <= 0.55 -> 0.15
+        drawPct <= 0.80 -> -0.05
+        else -> -0.22
     }
 
     private fun softmaxPercents(scores: List<Double>, temp: Double): List<Int> {
@@ -471,8 +477,13 @@ object QuantPredictor {
     }
 
     private fun buildHorseStrengths(c: ComputedHorse, f: List<Double>, edgePct: Int?, avgWeight: Double?, avgBestTime: Double?): List<String> = buildList {
-        if (c.trendSlope <= -0.6) add("📈 روند رو به رشد در کورس‌های اخیر")
-        if (f[0] >= 0.25) add("فرم و ثبات بالا در کورس‌های اخیر")
+        if (c.steamRatio >= 0.08 && c.horse.openingOdds != null && c.horse.marketOdds != null) {
+            add("🔥 پول هوشمند: افت ضریب (${fmt1(c.horse.openingOdds)} ← ${fmt1(c.horse.marketOdds)})")
+        }
+        if (c.horse.recentDigits.any { it == 1 }) {
+            add("سابقه برد در کورس‌های اخیر")
+        }
+        if (c.trendSlope <= -0.7) add("📈 روند رو به رشد در کورس‌های اخیر")
         if (c.horse.bestTimeSec != null && avgBestTime != null && c.horse.bestTimeSec < avgBestTime - 0.3) {
             add("رکورد زمانی سریع‌تر از میانگین (${formatSec(c.horse.bestTimeSec)})")
         }
@@ -484,15 +495,24 @@ object QuantPredictor {
     }.take(4)
 
     private fun buildHorseRisks(c: ComputedHorse, f: List<Double>): List<String> = buildList {
-        if (c.trendSlope >= 0.8) add("📉 روند نزولی در کورس‌های اخیر")
-        if (f[0] <= -0.3) add("افت فرم در مسابقات اخیر")
+        if (c.steamRatio <= -0.14 && c.horse.openingOdds != null && c.horse.marketOdds != null) {
+            add("افت اقبال بازار: افزایش ضریب (${fmt1(c.horse.openingOdds)} ← ${fmt1(c.horse.marketOdds)})")
+        }
+        if (c.trendSlope >= 0.9) add("📉 روند نزولی در کورس‌های اخیر")
+        if (f[0] <= -0.35) add("افت فرم در مسابقات اخیر")
         if (f[3] <= -0.35) add("وزن سنگین‌تر از میانگین (${c.horse.weightKg}kg)")
         if (c.horse.daysSinceLast != null && c.horse.daysSinceLast > 60) add("دوری طولانی (${c.horse.daysSinceLast} روز)")
-        if (c.drawPct != null && c.drawPct >= 0.80) add("دپار بیرونی (${c.horse.gate})")
+        if (c.drawPct != null && c.drawPct >= 0.85) add("دپار بیرونی (${c.horse.gate})")
     }.take(3)
 
     private fun buildAnomalies(horses: List<ParsedHorseRow>, enriched: List<EnrichedHorse>, avgBestTime: Double?): List<AnomalySignal> {
         val list = mutableListOf<AnomalySignal>()
+        enriched.filter { it.computed.steamRatio >= 0.08 }.forEach { e ->
+            val h = e.computed.horse
+            if (h.openingOdds != null && h.marketOdds != null) {
+                list.add(AnomalySignal("پول هوشمند (Steamer) روی #${h.number} ${h.horseName}", "هشدار بالا", "ضریب اسب از ${fmt1(h.openingOdds)} به ${fmt1(h.marketOdds)} کاهش یافته است (ورود سرمایه جدی)."))
+            }
+        }
         horses.filter { it.trainer.isNotBlank() }.groupBy { it.trainer.trim().lowercase() }.filter { it.value.size >= 2 }.forEach { (_, g) ->
             list.add(AnomalySignal("هم‌مربی در کورس (${g.first().trainer})", "نکته تاکتیکی", "حضور همزمان ${g.size} اسب: ${g.joinToString("، ") { "#${it.number} ${it.horseName}" }}"))
         }
@@ -500,7 +520,7 @@ object QuantPredictor {
             list.add(AnomalySignal("هم‌مالک در کورس (${g.first().owner})", "نکته تاکتیکی", "مالکیت مشترک: ${g.joinToString("، ") { "#${it.number} ${it.horseName}" }}"))
         }
         enriched.firstOrNull { (it.edgePct ?: 0) >= 20 && (it.computed.marketProb ?: 100.0) <= 18.0 }?.let { e ->
-            list.add(AnomalySignal("هشدار ارزش پنهان روی #${e.computed.horse.number} ${e.computed.horse.horseName}", "هشدار بالا", "بازار خالص فقط ${e.computed.marketProb?.roundToInt()}٪ است اما شاخص فنی ${e.techProb}٪ است (Edge +${e.edgePct}٪)."))
+            list.add(AnomalySignal("ارزش پنهان روی #${e.computed.horse.number} ${e.computed.horse.horseName}", "هشدار بالا", "بازار خالص فقط ${e.computed.marketProb?.roundToInt()}٪ است اما شاخص فنی ${e.techProb}٪ است (Edge +${e.edgePct}٪)."))
         }
         if (avgBestTime != null) {
             horses.filter { it.bestTimeSec != null }.minByOrNull { it.bestTimeSec!! }?.let { f ->
@@ -537,7 +557,8 @@ object QuantPredictor {
         val marketProb: Double?,
         val winRate: Int,
         val placeRate: Int,
-        val trendSlope: Double
+        val trendSlope: Double,
+        val steamRatio: Double
     )
 
     private data class EnrichedHorse(
