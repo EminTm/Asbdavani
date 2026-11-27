@@ -60,7 +60,11 @@ object QuantPredictor {
         val avgWeight = activeHorses.mapNotNull { it.weightKg }.takeIf { it.size >= 2 }?.average()
         val distFactor = if ((ctx.distanceMeters ?: 1400) >= 1600) 1.25 else 1.0
 
-        val rawFormScores = activeHorses.map { computeRawFormScore(it) }
+        // حذف حاشیه سود ضرایب (Overround Removal از ایده Arena AI)
+        val normalizedMarketProbs = computeNormalizedMarketProbs(activeHorses)
+
+        val trendSlopes = activeHorses.map { computeFormTrendSlope(it.recentDigits) }
+        val rawFormScores = activeHorses.mapIndexed { i, h -> computeRawFormScore(h, trendSlopes[i]) }
         val avgFormScore = rawFormScores.average()
         val effWeights = adjustWeightsForProfile(weights, riskProfile)
 
@@ -76,9 +80,13 @@ object QuantPredictor {
                 (((avgWeight - h.weightKg) * distFactor) / 3.5).coerceIn(-1.0, 1.0)
             } else 0.0
             val fFreshness = computeFreshnessFeature(h.daysSinceLast)
-            val drawPct = h.gate?.let { (it.toDouble() / fieldSize).coerceIn(0.05, 1.0) }
+
+            // فرمول دقیق دپار از 0.00 تا 1.00: (draw - 1) / (n - 1)
+            val drawPct = h.gate?.let { g ->
+                ((g - 1).toDouble() / (fieldSize - 1).coerceAtLeast(1)).coerceIn(0.0, 1.0)
+            }
             val fDraw = computeDrawFeature(drawPct)
-            val marketProb = h.marketAgfPct ?: h.marketOdds?.takeIf { it > 1.0 }?.let { (100.0 / it) }
+            val marketProb = normalizedMarketProbs[idx]
             val fMarket = if (marketProb != null) {
                 ((marketProb - (100.0 / fieldSize)) / 22.0).coerceIn(-1.0, 1.0)
             } else 0.0
@@ -93,7 +101,7 @@ object QuantPredictor {
             val totalScore = techScore + (fMarket * effWeights.marketWeight)
             val (winRate, placeRate) = extractWinPlaceRates(h)
 
-            ComputedHorse(h, features, techScore, totalScore, drawPct, marketProb?.coerceIn(1.0, 90.0), winRate, placeRate)
+            ComputedHorse(h, features, techScore, totalScore, drawPct, marketProb, winRate, placeRate, trendSlopes[idx])
         }
 
         val winProbs = softmaxPercents(computed.map { it.totalScore }, temp = 1.45)
@@ -113,10 +121,18 @@ object QuantPredictor {
             val edgePct = c.marketProb?.let { mp ->
                 (((tp.toDouble() / mp) - 1.0) * 100.0).roundToInt().coerceIn(-85, 250)
             }
+            val effectiveOdds = c.horse.marketOdds?.takeIf { it > 1.0 } ?: c.marketProb?.let { 100.0 / it }
+            val quarterKellyPct = if (effectiveOdds != null && effectiveOdds > 1.05) {
+                val p = wp / 100.0
+                val b = effectiveOdds - 1.0
+                val k = ((b * p - (1.0 - p)) / b).coerceAtLeast(0.0)
+                ((k * 0.25 * 100.0) * 10.0).roundToInt() / 10.0
+            } else 0.0
+
             val placeProb = (wp * (1.1 + placeCutoff * 0.65)).roundToInt().coerceIn(wp, 95)
             val mathScore = (50.0 + (c.totalScore * 16.0)).roundToInt().coerceIn(12, 99)
 
-            EnrichedHorse(c, wp, placeProb, fairOdds, minValueOdds, tp, edgePct, mathScore)
+            EnrichedHorse(c, wp, placeProb, fairOdds, minValueOdds, tp, edgePct, quarterKellyPct, mathScore)
         }.sortedByDescending { it.winProb }
 
         val preScores = enriched.map { e ->
@@ -125,8 +141,9 @@ object QuantPredictor {
                 add("شانس ${e.winProb}٪ (ضریب ${fmt1(e.fairOdds)} | ارزش ≥ ${fmt1(e.minValueOdds)})")
                 if (c.marketProb != null && e.edgePct != null) {
                     val sign = if (e.edgePct >= 0) "+${e.edgePct}" else "${e.edgePct}"
-                    add("بازار ${c.marketProb.roundToInt()}٪ | Edge $sign٪")
+                    add("بازار خالص ${c.marketProb.roundToInt()}٪ | Edge $sign٪")
                 }
+                if (e.quarterKellyPct >= 0.5) add("Kelly ${fmt1(e.quarterKellyPct)}٪")
                 if (c.horse.bestTimeSec != null) add("تایم ${formatSec(c.horse.bestTimeSec)}")
                 if (c.horse.daysSinceLast != null) add("استراحت ${c.horse.daysSinceLast} روز")
             }.joinToString(" • ")
@@ -182,7 +199,7 @@ object QuantPredictor {
 
             val verdict = when {
                 idx == 0 && e.winProb >= 26 -> "تک‌محور و مدعی اصلی"
-                (e.edgePct ?: 0) >= 15 -> "گزینه باارزش (Value Pick)"
+                (e.edgePct ?: 0) >= 15 -> "گزینه باارزش (Kelly ${fmt1(e.quarterKellyPct)}٪)"
                 e.placeProb >= 45 -> "شانس بالا برای سکو"
                 else -> "ذخیره / ریسکی"
             }
@@ -224,7 +241,7 @@ object QuantPredictor {
             .maxByOrNull { it.edgePct ?: it.techProb }
             ?.let { e ->
                 val c = e.computed
-                val edgeTxt = e.edgePct?.let { "اختلاف ارزش +$it٪ نسبت به بازار دارد" }
+                val edgeTxt = e.edgePct?.let { "اختلاف ارزش +$it٪ نسبت به بازار دارد (Kelly ${fmt1(e.quarterKellyPct)}٪)" }
                     ?: "از نظر فنی و وزنی پتانسیل شگفتی‌سازی دارد"
                 DarkHorsePick(
                     number = c.horse.number,
@@ -324,6 +341,35 @@ object QuantPredictor {
         return next to hitTxt
     }
 
+    private fun computeNormalizedMarketProbs(horses: List<ParsedHorseRow>): List<Double?> {
+        val rawProbs = horses.map { h ->
+            h.marketAgfPct?.takeIf { it > 0.0 }
+                ?: h.marketOdds?.takeIf { it > 1.0 }?.let { 100.0 / it }
+        }
+        val validCount = rawProbs.count { it != null }
+        val totalSum = rawProbs.filterNotNull().sum()
+        if (validCount >= (horses.size / 2).coerceAtLeast(2) && totalSum > 1.0) {
+            return rawProbs.map { rp -> rp?.let { ((it / totalSum) * 100.0).coerceIn(1.0, 92.0) } }
+        }
+        return rawProbs.map { it?.coerceIn(1.0, 92.0) }
+    }
+
+    private fun computeFormTrendSlope(digits: List<Int>): Double {
+        val slice = digits.takeLast(5)
+        if (slice.size < 3) return 0.0
+        val n = slice.size.toDouble()
+        val meanX = (n - 1.0) / 2.0
+        val meanY = slice.average()
+        var num = 0.0
+        var den = 0.0
+        for (i in slice.indices) {
+            val dx = i - meanX
+            num += dx * (slice[i] - meanY)
+            den += dx * dx
+        }
+        return if (den > 0.0) num / den else 0.0
+    }
+
     private fun buildComboSuggestion(enriched: List<EnrichedHorse>): String {
         if (enriched.size < 3) return ""
         val n1 = enriched[0].computed.horse
@@ -346,7 +392,10 @@ object QuantPredictor {
         RiskProfile.UPSET_HUNTER -> w.copy(marketWeight = w.marketWeight * 0.4, weightDiffWeight = w.weightDiffWeight * 1.3, drawWeight = w.drawWeight * 1.25, freshnessWeight = w.freshnessWeight * 1.2)
     }
 
-    private fun computeRawFormScore(h: ParsedHorseRow): Double {
+    private fun computeRawFormScore(h: ParsedHorseRow, trendSlope: Double): Double {
+        var baseScore = 50.0
+        var hasMain = false
+
         if (h.formString != null) {
             val m = formRegex.find(h.formString)
             if (m != null) {
@@ -354,7 +403,8 @@ object QuantPredictor {
                 val s = m.groupValues[2].toDoubleOrNull() ?: 0.0
                 val t = m.groupValues[3].toDoubleOrNull() ?: 0.0
                 val n = (m.groupValues[4].toDoubleOrNull() ?: 0.0).coerceAtLeast(1.0)
-                return (((f + 0.35) / (n + 3.0)) * 120.0) + (((f + s + t + 0.9) / (n + 3.0)) * 65.0)
+                baseScore = (((f + 0.35) / (n + 3.0)) * 120.0) + (((f + s + t + 0.9) / (n + 3.0)) * 65.0)
+                hasMain = true
             }
         }
         if (h.recentDigits.isNotEmpty()) {
@@ -368,9 +418,13 @@ object QuantPredictor {
                 sumW += w
                 sumPts += (((11.0 - pos.coerceIn(1, 10)) / 10.0) * 100.0) * w
             }
-            return (if (sumW > 0) sumPts / sumW else 50.0) + (h.s20Score?.let { (it - 16) * 1.5 } ?: 0.0)
+            val recentScore = (if (sumW > 0) sumPts / sumW else 50.0) + (h.s20Score?.let { (it - 16) * 1.5 } ?: 0.0)
+            baseScore = if (hasMain) (baseScore * 0.55 + recentScore * 0.45) else recentScore
         }
-        return 50.0
+
+        // منفی بودن شیب یعنی رتبه رو به ۱ نزدیک‌تر شده (روند مثبت)
+        val trendAdjust = (-trendSlope * 2.5).coerceIn(-10.0, 10.0)
+        return baseScore + trendAdjust
     }
 
     private fun extractWinPlaceRates(h: ParsedHorseRow): Pair<Int, Int> {
@@ -403,8 +457,8 @@ object QuantPredictor {
 
     private fun computeDrawFeature(drawPct: Double?): Double = when {
         drawPct == null -> 0.0
-        drawPct <= 0.30 -> 0.65
-        drawPct <= 0.55 -> 0.25
+        drawPct <= 0.25 -> 0.65
+        drawPct <= 0.50 -> 0.25
         drawPct <= 0.78 -> -0.15
         else -> -0.55
     }
@@ -417,6 +471,7 @@ object QuantPredictor {
     }
 
     private fun buildHorseStrengths(c: ComputedHorse, f: List<Double>, edgePct: Int?, avgWeight: Double?, avgBestTime: Double?): List<String> = buildList {
+        if (c.trendSlope <= -0.6) add("📈 روند رو به رشد در کورس‌های اخیر")
         if (f[0] >= 0.25) add("فرم و ثبات بالا در کورس‌های اخیر")
         if (c.horse.bestTimeSec != null && avgBestTime != null && c.horse.bestTimeSec < avgBestTime - 0.3) {
             add("رکورد زمانی سریع‌تر از میانگین (${formatSec(c.horse.bestTimeSec)})")
@@ -424,11 +479,12 @@ object QuantPredictor {
         if (f[2] >= 0.3) add("ریتینگ / هندیکپ برتر (${c.horse.rating?.toInt()})")
         if (c.horse.weightKg != null && avgWeight != null && c.horse.weightKg <= avgWeight - 1.5) add("مزیت وزن سبک (${c.horse.weightKg}kg)")
         if (f[4] >= 0.5) add("آمادگی زمانی عالی (${c.horse.daysSinceLast} روز استراحت)")
-        if (c.drawPct != null && c.drawPct <= 0.35) add("دپار داخلی مناسب (${String.format(Locale.US, "%.2f", c.drawPct)})")
+        if (c.drawPct != null && c.drawPct <= 0.30) add("دپار داخلی مناسب (${String.format(Locale.US, "%.2f", c.drawPct)})")
         if (edgePct != null && edgePct >= 15) add("ارزش پنهان +$edgePct٪ نسبت به بازار")
     }.take(4)
 
     private fun buildHorseRisks(c: ComputedHorse, f: List<Double>): List<String> = buildList {
+        if (c.trendSlope >= 0.8) add("📉 روند نزولی در کورس‌های اخیر")
         if (f[0] <= -0.3) add("افت فرم در مسابقات اخیر")
         if (f[3] <= -0.35) add("وزن سنگین‌تر از میانگین (${c.horse.weightKg}kg)")
         if (c.horse.daysSinceLast != null && c.horse.daysSinceLast > 60) add("دوری طولانی (${c.horse.daysSinceLast} روز)")
@@ -444,7 +500,7 @@ object QuantPredictor {
             list.add(AnomalySignal("هم‌مالک در کورس (${g.first().owner})", "نکته تاکتیکی", "مالکیت مشترک: ${g.joinToString("، ") { "#${it.number} ${it.horseName}" }}"))
         }
         enriched.firstOrNull { (it.edgePct ?: 0) >= 20 && (it.computed.marketProb ?: 100.0) <= 18.0 }?.let { e ->
-            list.add(AnomalySignal("هشدار ارزش پنهان روی #${e.computed.horse.number} ${e.computed.horse.horseName}", "هشدار بالا", "بازار فقط ${e.computed.marketProb?.roundToInt()}٪ است اما شاخص فنی ${e.techProb}٪ است (Edge +${e.edgePct}٪)."))
+            list.add(AnomalySignal("هشدار ارزش پنهان روی #${e.computed.horse.number} ${e.computed.horse.horseName}", "هشدار بالا", "بازار خالص فقط ${e.computed.marketProb?.roundToInt()}٪ است اما شاخص فنی ${e.techProb}٪ است (Edge +${e.edgePct}٪)."))
         }
         if (avgBestTime != null) {
             horses.filter { it.bestTimeSec != null }.minByOrNull { it.bestTimeSec!! }?.let { f ->
@@ -457,7 +513,7 @@ object QuantPredictor {
     }
 
     private fun buildTacticalScenario(enriched: List<EnrichedHorse>, dist: Int?): String {
-        val insideFav = enriched.firstOrNull { it.computed.drawPct != null && it.computed.drawPct!! <= 0.35 }?.computed?.horse
+        val insideFav = enriched.firstOrNull { it.computed.drawPct != null && it.computed.drawPct!! <= 0.30 }?.computed?.horse
         val top1 = enriched.first().computed.horse
         val distNote = if ((dist ?: 1400) <= 1300) "در این مسافت سرعتی، استارت سریع و دپار داخلی نقش کلیدی دارد." else "در این مسافت، ذخیره انرژی تا پیچ آخر و وزن سبک تعیین‌کننده است."
         val insideNote = insideFav?.let { " اسب #${it.number} ${it.horseName} از خط داخلی شانس شروع بهتری دارد." } ?: ""
@@ -480,7 +536,8 @@ object QuantPredictor {
         val drawPct: Double?,
         val marketProb: Double?,
         val winRate: Int,
-        val placeRate: Int
+        val placeRate: Int,
+        val trendSlope: Double
     )
 
     private data class EnrichedHorse(
@@ -491,6 +548,7 @@ object QuantPredictor {
         val minValueOdds: Double,
         val techProb: Int,
         val edgePct: Int?,
+        val quarterKellyPct: Double,
         val mathScore: Int
     )
 }
