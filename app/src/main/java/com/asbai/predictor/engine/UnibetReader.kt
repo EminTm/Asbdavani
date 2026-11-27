@@ -15,7 +15,7 @@ object UnibetReader {
 
     private val noiseWords = setOf(
         "win", "place", "show", "each way", "ew", "sp", "nr", "non-runner",
-        "non runner", "uitgeschakeld", "voorspelling", "wedden", "odds", "form",
+        "non runner", "niet-renner", "uitgeschakeld", "voorspelling", "wedden", "odds", "form",
         "live", "info", "stats", "results", "racecard", "unibet", "paardenraces",
         "favoriet", "race", "races", "all", "today", "tomorrow", "cet", "gmt", "bst",
         "vandaag", "morgen", "starttijd", "afstand", "lopers", "plaats", "winst", "prijs"
@@ -65,11 +65,17 @@ object UnibetReader {
             } else emptyList()
 
             val nextIdx = headerIndices.getOrNull(hPos + 1)?.let { minOf(it, footerIdx) } ?: footerIdx
-            var jockey = ""; var trainer = ""; var weightKg: Double? = null; var lastOdds: Double? = null
+            var jockey = ""; var trainer = ""; var weightKg: Double? = null
+            var isNonRunner = false
+            val oddsList = mutableListOf<Double>()
 
             for (k in (idx + 1) until nextIdx) {
                 val ln = lines[k]
                 if (ln.startsWith("Weergave odds", true) || ln.startsWith("WIN/", true)) break
+                if (ln.contains("Niet-Renner", true) || ln.contains("Non-Runner", true) || ln.equals("NR", true) || ln.contains("Scratched", true)) {
+                    isNonRunner = true
+                    break
+                }
                 if (jockey.isBlank() && Regex("""^J[A-Z]""").containsMatchIn(ln)) {
                     jockey = ln.substring(1).replace(Regex("""\(\d+(?:\.\d+)?\).*$"""), "").replace(weightStoneRegex, "").trim()
                 }
@@ -82,10 +88,24 @@ object UnibetReader {
                     if (kg in 40.0..75.0) weightKg = kg
                 }
                 val od = parseOddsToken(ln)
-                if (od != null && od > 1.0) lastOdds = od
+                if (od != null && od > 1.0) oddsList.add(od)
             }
 
-            out.add(ParsedHorseRow(number, gate, horseName, weightKg, recentDigits = recentDigits, marketOdds = lastOdds, trainer = trainer, jockey = jockey))
+            if (isNonRunner) continue
+
+            out.add(
+                ParsedHorseRow(
+                    number = number,
+                    gate = gate,
+                    horseName = horseName,
+                    weightKg = weightKg,
+                    recentDigits = recentDigits,
+                    openingOdds = oddsList.firstOrNull(),
+                    marketOdds = oddsList.lastOrNull(),
+                    trainer = trainer,
+                    jockey = jockey
+                )
+            )
         }
         return out
     }
@@ -117,9 +137,24 @@ object UnibetReader {
 
             if (horseName.isNotBlank() && out.none { it.horseName.equals(horseName, true) }) {
                 val joined = lines.subList(winFrom, i).joinToString(" ")
-                out.add(ParsedHorseRow(number ?: (out.size + 1).toString(), horseName = horseName.take(36), weightKg = weightKgRegex.find(joined)?.value?.toDoubleOrNull(), marketOdds = odds.takeIf { it > 1.0 }, trainer = trainer, jockey = jockey))
+                val blockOdds = mutableListOf(odds)
+                while (i + 1 < lines.size) {
+                    val nextOd = parseOddsToken(lines[i + 1]) ?: break
+                    if (nextOd > 1.0) blockOdds.add(nextOd)
+                    i++
+                }
+                out.add(
+                    ParsedHorseRow(
+                        number = number ?: (out.size + 1).toString(),
+                        horseName = horseName.take(36),
+                        weightKg = weightKgRegex.find(joined)?.value?.toDoubleOrNull(),
+                        openingOdds = blockOdds.firstOrNull()?.takeIf { it > 1.0 },
+                        marketOdds = blockOdds.lastOrNull()?.takeIf { it > 1.0 },
+                        trainer = trainer,
+                        jockey = jockey
+                    )
+                )
                 blockStart = i + 1
-                while (i + 1 < lines.size && parseOddsToken(lines[i + 1]) != null) i++
             }
             i++
         }
@@ -154,7 +189,8 @@ object UnibetReader {
                 val rawNum = o.optString("startNumber").ifBlank { o.optString("clothNumber") }.trim()
                 val num = if (rawNum.isNotBlank() && rawNum.length <= 3) rawNum else (horses.size + 1).toString()
                 val rawOdds = o.optDouble("odds", 0.0)
-                horses.add(ParsedHorseRow(num, o.optInt("draw", 0).takeIf { it in 1..30 }, name.take(40), marketOdds = if (rawOdds >= 100.0) rawOdds / 1000.0 else if (rawOdds > 1.0) rawOdds else null))
+                val decOdds = if (rawOdds >= 100.0) rawOdds / 1000.0 else if (rawOdds > 1.0) rawOdds else null
+                horses.add(ParsedHorseRow(num, o.optInt("draw", 0).takeIf { it in 1..30 }, name.take(40), openingOdds = decOdds, marketOdds = decOdds))
             }
             if (horses.size >= 2) horses else null
         }.getOrNull()
