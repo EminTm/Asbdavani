@@ -58,6 +58,7 @@ data class ParsedHorseRow(
     val daysSinceLast: Int? = null,
     val bestTimeSec: Double? = null,
     val s20Score: Int? = null,
+    val openingOdds: Double? = null,
     val marketOdds: Double? = null,
     val marketAgfPct: Double? = null,
     val owner: String = "",
